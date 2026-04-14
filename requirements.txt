@@ -2,5 +2,5 @@ statsmodels
 pmdarima
 pandas
 requests
-anthropic
+openai
 python-dotenv

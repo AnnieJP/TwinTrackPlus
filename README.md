@@ -11,7 +11,7 @@ TwinTrack lets a small business owner register their business as a **digital twi
 
 Each simulation runs a full pipeline:
 1. Pulls live economic data (CPI, unemployment, GDP, consumer spending, local market density, news sentiment)
-2. Computes price elasticity and market context using Claude Haiku
+2. Computes price elasticity and market context using a local LLM agent
 3. Models the financial outcome under the proposed change
 4. Returns OP1 (control baseline) and OP2 (experiment result) with a plain-English recommendation
 
@@ -28,19 +28,25 @@ Each simulation runs a full pipeline:
 twintrack/          ← React + Vite frontend (port 5173)
 backend/
   server.py         ← ThreadingHTTPServer (port 8765)
-  ml/               ← Market data + LLM layer
+  agents/           ← Multi-agent system (Ollama-backed)
+    base.py         ← Shared Ollama client + agentic tool-use loop
+    data_agent.py   ← NAICS/MSA resolution + news sentiment
+    enrichment_agent.py  ← NL parameter extraction from user descriptions
+    simulation_agent.py  ← Demographic resolution + recommendation generation
+    orchestrator.py ← Python coordinator sequencing the agents
+  ml/               ← Market data + forecasting layer
     fetcher.py      ← FRED, BLS, BEA, Census, NewsAPI
-    context.py      ← NAICS/MSA resolver via Claude Haiku
+    context.py      ← NAICS/MSA resolver (agent-backed)
     elasticity.py   ← Price/labor/market elasticity
     forecaster.py   ← ARIMA 12-month projections
-    sentiment.py    ← News sentiment scoring
+    sentiment.py    ← News sentiment scoring (agent-backed)
     ms_builder.py   ← Builds MS (market snapshot) JSON
     main.py         ← ML pipeline entry point
   sim/
     sim_bridge.py   ← Translates frontend form → IP1/IP2
     sim_layer.py    ← Financial simulation engine
   data/
-    base/           ← Enrollment JSON + IP files
+    base/           ← Enrollment JSON files
     ms/             ← Market snapshot outputs
     op/             ← Simulation outputs (OP1 + OP2)
     cache/          ← API response cache (by date)
@@ -48,12 +54,14 @@ backend/
 
 **Request flow for a simulation:**
 ```
-Frontend → POST /api/simulate
+Frontend → Run simulation engine (UI)
+  → POST /api/simulate
   → load twin layer from disk
-  → write IP file
-  → ml_run()        → ms/ms_exp_<bizid>_<date>.json
+  → NL enrichment agent (if description provided)
+  → ml_run()         → ms/ms_exp_<bizid>_<date>.json
   → run_simulation() → {op1, op2}
-  → write_op()      → op/op_<usecase>_<bizid>_<date>.json
+  → write_op()       → op/op_<usecase>_<bizid>_<date>.json
+  → recommendation agent
   → return {op1, op2, recommendation}
 ```
 
@@ -64,6 +72,7 @@ Frontend → POST /api/simulate
 ### Prerequisites
 - Python 3.10+
 - Node.js 18+
+- [Ollama](https://ollama.com) with `qwen2.5:7b` pulled
 
 ### 1. Clone and install
 
@@ -76,13 +85,17 @@ cd twintrack
 npm install
 ```
 
-### 2. Environment variables
+### 2. Pull the LLM model
 
-Copy `.env.example` to `.env` and fill in your keys:
+```bash
+ollama pull qwen2.5:7b
+```
+
+### 3. Environment variables
+
+Copy `.env.example` to `.env` and fill in your API keys:
 
 ```env
-ANTHROPIC_API_KEY=sk-ant-...
-
 FRED_API_KEY=...
 BLS_API_KEY=...
 BEA_API_KEY=...
@@ -92,22 +105,28 @@ NEWSDATA_API_KEY=...
 
 | Key | Get it from |
 |-----|-------------|
-| `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com) |
 | `FRED_API_KEY` | [fred.stlouisfed.org/docs/api](https://fred.stlouisfed.org/docs/api/api_key.html) |
 | `BLS_API_KEY` | [data.bls.gov/registrationEngine](https://data.bls.gov/registrationEngine/) |
 | `BEA_API_KEY` | [apps.bea.gov/API/signup](https://apps.bea.gov/API/signup/) |
 | `CENSUS_API_KEY` | [api.census.gov/data/key_signup.html](https://api.census.gov/data/key_signup.html) |
 | `NEWSDATA_API_KEY` | [newsdata.io](https://newsdata.io) |
 
-### 3. Run
+> No cloud LLM keys required — all AI runs locally via Ollama.
 
-**Terminal 1 — backend:**
+### 4. Run
+
+**Terminal 1 — Ollama (if not already running):**
+```bash
+ollama serve
+```
+
+**Terminal 2 — backend:**
 ```bash
 python backend/server.py
 # Listening on http://127.0.0.1:8765
 ```
 
-**Terminal 2 — frontend:**
+**Terminal 3 — frontend:**
 ```bash
 cd twintrack
 npm run dev
@@ -123,20 +142,19 @@ Open **http://localhost:5173** in your browser.
 ### Step 1 — Register your business
 Go to **Register business** in the sidebar. Enter your financials, cost breakdown, loan details, sales channel, and product info. The server assigns a `business_id` (integer, starting at 1) and writes:
 - `backend/data/base/input_newbusiness_<date>.json`
-- `backend/data/base/ip_<bizid>_<date>.json`
 
 ### Step 2 — Run a simulation
-Go to **Run simulation**. Select your registered business, pick a use case, fill in the parameters, and optionally describe your decision in plain English. The LLM layer will extract and merge any additional parameters from your description.
+Go to **Run simulation**. Select your registered business, pick a use case, and optionally describe your decision in plain English. The enrichment agent will extract and merge structured parameters from your description — no need to fill in every numeric field.
 
-Click **Run simulation engine** to execute the full pipeline. Results appear as OP1 (control) and OP2 (experiment) with a Claude-generated recommendation.
+Click **Run simulation engine** to execute the full pipeline. Results appear as OP1 (control) and OP2 (experiment) with an Ollama-generated recommendation.
 
 ### Step 3 — View results
 The dashboard shows:
 - Revenue, margin, and footfall delta (OP2 vs OP1)
-- 12-month projections (ARIMA)
+- 6-month revenue projection chart (ARIMA)
 - Confidence score
 - News sentiment (from local market news)
-- Plain-English verdict: **proceed / proceed with caution / avoid**
+- Plain-English recommendation
 
 ---
 
@@ -145,11 +163,11 @@ The dashboard shows:
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/health` | Server health check |
-| `POST` | `/api/save-twin-layer` | Register/update a business |
-| `POST` | `/api/simulate` | Run a simulation |
-| `GET` | `/api/list-businesses` | List all enrolled businesses |
-| `GET` | `/api/op-result?business_id=1&use_case=pricing` | Fetch latest OP output |
-| `POST` | `/api/update-twin-layer` | Update business financials |
+| `GET` | `/api/enrollments` | List all enrolled businesses |
+| `POST` | `/api/save-twin-layer` | Register a new business |
+| `POST` | `/api/update-twin-layer` | Update business financials (versioned) |
+
+> Simulations are run through the UI only — there is no scripted `/api/simulate` endpoint.
 
 ---
 
@@ -167,26 +185,15 @@ All API responses are cached to `backend/data/cache/` by date. Repeat runs on th
 
 ---
 
-## LLM Integration
+## LLM / Agent Integration
 
-Three Claude Haiku (`claude-haiku-4-5-20251001`) calls in the pipeline:
+Three local Ollama (`qwen2.5:7b`) agent calls in the pipeline:
 
-1. **NAICS + MSA resolver** — maps `business_type + city + state` → `naics_code + msa_code` when the business type doesn't match the dropdown options
-2. **NL → IP2 enrichment** — extracts structured simulation parameters from the optional plain-English description on step 3; only overrides keys explicitly mentioned
-3. **Recommendation generator** — writes a 2–3 sentence verdict grounded in the actual OP delta numbers (revenue, margin, footfall, confidence score)
+1. **Data Agent** — resolves `business_type + city + state` → `naics_code + msa_code`; also handles news sentiment analysis
+2. **Enrichment Agent** — extracts structured simulation parameters from the optional plain-English description on step 3; only overrides keys explicitly mentioned
+3. **Simulation Agent** — writes a 2–3 sentence recommendation grounded in the actual OP delta numbers (revenue, margin, footfall, confidence score)
 
-All three calls degrade gracefully — if the API key is missing or the call fails, the pipeline continues without LLM output.
-
----
-
-## File Naming Convention
-
-| Layer | Pattern |
-|-------|---------|
-| Enrollment | `input_newbusiness_<date>.json` |
-| IP (twin layer) | `ip_<bizid>_<date>.json` |
-| Market snapshot | `ms_exp_<bizid>_<date>.json` |
-| Simulation output | `op_<usecase>_<bizid>_<date>.json` |
+All three calls degrade gracefully — if Ollama is unavailable, the pipeline continues without LLM output.
 
 ---
 
@@ -197,19 +204,20 @@ All three calls degrade gracefully — if the API key is missing or the call fai
 | Frontend | React 19, Vite 5 |
 | Backend | Python 3 `http.server.ThreadingHTTPServer` |
 | Forecasting | `statsmodels` ARIMA, `pmdarima` auto-ARIMA |
-| LLM | Anthropic Claude Haiku (`anthropic` SDK) |
+| LLM | Ollama `qwen2.5:7b` via OpenAI-compatible API |
+| Agent framework | Custom tool-use loop (`backend/agents/base.py`) |
 | Data | `pandas`, `requests` |
 | Config | `python-dotenv` |
 
 ---
 
-## Project Structure Notes
+## File Naming Convention
 
-- `backend/server.py` — single-file HTTP server; all routes in one `do_GET` / `do_POST` handler
-- `backend/ml/` — stateless pipeline; each module exports one main function
-- `backend/sim/sim_bridge.py` — translates messy frontend form values into clean IP1/IP2 dicts, with sanity checks and warnings
-- `twintrack/src/TwinTrack.jsx` — main app component; all pages rendered inline (no router)
-- `twintrack/src/Dashboard.jsx` — live dashboard that fetches OP output from the backend
+| Layer | Pattern |
+|-------|---------|
+| Enrollment | `input_newbusiness_<date>.json` |
+| Market snapshot | `ms_exp_<bizid>_<date>.json` |
+| Simulation output | `op_<usecase>_<bizid>_<date>.json` |
 
 ---
 

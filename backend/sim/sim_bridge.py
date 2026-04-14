@@ -5,53 +5,25 @@ Map TwinTrack UI / twin-layer JSON → IP1 + IP2 for sim_layer.run_simulation.
 from __future__ import annotations
 from typing import Any
 import os
-from anthropic import Anthropic
-from dotenv import load_dotenv
+import sys
 
-load_dotenv()
+# Make backend/ importable so agents package is accessible from sim/
+_BACKEND = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _BACKEND not in sys.path:
+    sys.path.insert(0, _BACKEND)
 
-_anthropic = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+from agents.simulation_agent import resolve_demographic as _agent_resolve_demographic
 
 _VALID_DEMOS = {"18_34", "35_54", "55_plus"}
 
 
 def _resolve_demographic(text: str) -> str:
     """
-    Use Claude Haiku to map any freetext audience description to one of the
-    three demographic keys the sim layer understands: 18_34, 35_54, 55_plus.
+    Use the Simulation Agent (Ollama) to map any freetext audience description
+    to one of the three demographic keys: 18_34, 35_54, 55_plus.
     Falls back to 35_54 on any error.
     """
-    if not text or not text.strip():
-        return "35_54"
-
-    # Fast path — if the user typed the key directly
-    cleaned = text.strip().lower()
-    if cleaned in _VALID_DEMOS:
-        return cleaned
-
-    prompt = (
-        f'A small business owner described their target audience as: "{text}"\n'
-        "Map this to exactly one of these demographic segments: 18_34, 35_54, 55_plus\n"
-        "Reply with ONLY the segment key, nothing else."
-    )
-    try:
-        response = _anthropic.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=10,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        result = response.content[0].text.strip().lower().replace(" ", "_")
-        if result in _VALID_DEMOS:
-            print(f"[sim_bridge] Haiku resolved audience '{text}' → '{result}'")
-            return result
-        # Haiku returned something unexpected — try substring match
-        for key in _VALID_DEMOS:
-            if key in result:
-                return key
-    except Exception as e:
-        print(f"[sim_bridge] Haiku demographic resolution failed ({e}) — using default 35_54.")
-
-    return "35_54"
+    return _agent_resolve_demographic(text)
 
 
 def twin_layer_to_ip1(twin: dict[str, Any]) -> dict[str, Any]:

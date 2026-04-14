@@ -1,11 +1,13 @@
 import json
 import os
-from anthropic import Anthropic
-from dotenv import load_dotenv
+import sys
 
-load_dotenv()
+# Make backend/ importable so agents package is accessible from ml/
+_BACKEND = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _BACKEND not in sys.path:
+    sys.path.insert(0, _BACKEND)
 
-client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+from agents.data_agent import resolve_business_codes as _agent_resolve_codes
 
 # -------------------------------------------------------------------
 # Hardcoded NAICS lookup (~30 common B2C business types)
@@ -139,21 +141,8 @@ VALID_MSA = set(MSA_LOOKUP.values())
 
 
 def _haiku_map(business_type: str, city: str, state: str) -> dict:
-    """Call Claude Haiku to map business type and location to NAICS + MSA codes."""
-    prompt = f"""Given business type: "{business_type}" and location: "{city}, {state}"
-Return ONLY a valid JSON object with no explanation:
-{{"naics_code": "<6-digit NAICS code>", "msa_code": "<5-digit MSA code>"}}"""
-
-    response = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=100,
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    try:
-        return json.loads(response.content[0].text.strip())
-    except Exception:
-        return {}
+    """Use the Data Agent (Ollama) to map business type and location to NAICS + MSA codes."""
+    return _agent_resolve_codes(business_type, city, state)
 
 
 def _validate_naics(code: str) -> bool:
