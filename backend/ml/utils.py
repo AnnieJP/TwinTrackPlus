@@ -43,6 +43,36 @@ def get_trend(series: list, periods: int = 6) -> str:
     return "stable"
 
 
+def compute_cagr(series: list, freq: str = "Q") -> float:
+    """
+    Compute annualised compound growth rate from a time series.
+
+    Args:
+        series: list of {date, value} dicts sorted ascending
+        freq:   "M" (monthly) or "Q" (quarterly) — sets periods per year
+
+    Returns:
+        CAGR as a decimal (e.g. 0.032 = 3.2% annual growth).
+        Returns 0.0 if series is too short or values are non-positive.
+    """
+    if len(series) < 2:
+        return 0.0
+    try:
+        v_start = float(series[0]["value"])
+        v_end   = float(series[-1]["value"])
+        if v_start <= 0 or v_end <= 0:
+            return 0.0
+        n_periods   = len(series) - 1
+        periods_per_year = 12 if freq == "M" else 4
+        years       = n_periods / periods_per_year
+        if years <= 0:
+            return 0.0
+        cagr = (v_end / v_start) ** (1.0 / years) - 1.0
+        return round(cagr, 6)
+    except Exception:
+        return 0.0
+
+
 def validate_ms_schema(ms: dict) -> bool:
     """
     Validate that MS file contains all required top-level keys.

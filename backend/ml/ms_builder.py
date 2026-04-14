@@ -11,7 +11,7 @@ OP_DIR         = os.path.join(_DATA_DIR, "op")
 BASE_DIR       = MS_DIR
 EXPERIMENT_DIR = MS_DIR
 
-from utils import get_latest, get_trend
+from utils import get_latest, get_trend, compute_cagr
 
 
 def build_ms(
@@ -172,8 +172,8 @@ def build_ms(
                 "trend":   "stable",
             },
             "sector_growth_rate": {
-                "current": 0.0,
-                "trend":   "stable",
+                "current": compute_cagr(sector_spending_series, freq="Q"),
+                "trend":   get_trend(sector_spending_series),
             },
         },
         "demographic_data": {
