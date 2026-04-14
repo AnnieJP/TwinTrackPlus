@@ -113,6 +113,7 @@ def run_forecasts(raw_data: dict, horizon: int) -> dict:
 
     fred = raw_data.get("fred", {})
     bls  = raw_data.get("bls", {})
+    bea  = raw_data.get("bea", {})
 
     empty = {"values": [], "uncertainty_upper": [], "uncertainty_lower": []}
     forecasts = {}
@@ -153,6 +154,32 @@ def run_forecasts(raw_data: dict, horizon: int) -> dict:
         )
     else:
         forecasts["unemployment_forecast"] = empty
+
+    # Sector spending forecast — BEA PCE quarterly series
+    bea_raw = bea.get("sector_consumer_spending", [])
+    try:
+        sector_spending_series = sorted([
+            {
+                "date": f"{r['TimePeriod'][:4]}-{str((int(r['TimePeriod'][5]) - 1) * 3 + 1).zfill(2)}-01",
+                "value": float(r["DataValue"].replace(",", ""))
+            }
+            for r in bea_raw
+            if r.get("LineNumber") == "1" and r.get("DataValue", "").replace(",", "").isdigit()
+        ], key=lambda x: x["date"])
+    except Exception:
+        sector_spending_series = []
+
+    if sector_spending_series:
+        print("[forecaster] Forecasting sector spending (quarterly)...")
+        spending_horizon = max(1, horizon // 3)
+        forecasts["sector_spending_forecast"] = _run_arima(
+            _series_to_df(sector_spending_series, freq="Q"),
+            spending_horizon,
+            "Sector Spending",
+        )
+    else:
+        print("[forecaster] No BEA sector spending data — skipping sector spending forecast.")
+        forecasts["sector_spending_forecast"] = empty
 
     print("[forecaster] All forecasts complete.")
     return forecasts

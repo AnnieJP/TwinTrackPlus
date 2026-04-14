@@ -281,7 +281,7 @@ def _target_audience(ip1: dict, ip2: dict, ms: dict) -> tuple[dict, dict, float,
     # Variable costs scale with new footfall volume; fixed costs stay constant
     volume_ratio   = new_footfall / max(footfall_op1, 1)
     new_variable   = variable_op1 * volume_ratio
-    marketing_cost = rev_op1 * marketing_spend_pct   # one-time spend, additive
+    marketing_cost = rev_op2 * marketing_spend_pct   # scales with new revenue, not baseline
     cogs_op2       = fixed_op1 + new_variable + marketing_cost
 
     profit_op1 = rev_op1 - cogs_op1

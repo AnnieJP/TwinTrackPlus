@@ -66,14 +66,56 @@ def build_ms(
         sector_spending_series = []
 
     # Parse Census demographics
+    # Response columns (positional): pop, median_income, median_age,
+    #   total_hh, <9 below-$50k brackets>, <3 $50k-$100k brackets>,
+    #   <4 above-$100k brackets>, geography
     demo_raw = census.get("demographics", [])
+    _US_INCOME_FALLBACK = {"below_50k": 0.45, "50k_100k": 0.35, "above_100k": 0.20}
+    _US_AGE_FALLBACK    = {"18_34": 0.28, "35_54": 0.36, "55_plus": 0.36}
     try:
-        demo_data = demo_raw[1] if len(demo_raw) > 1 else []
-        population    = int(demo_data[0]) if demo_data else 0
-        median_income = int(demo_data[1]) if demo_data else 0
+        demo_data     = demo_raw[1] if len(demo_raw) > 1 else []
+        population    = int(demo_data[0])    if len(demo_data) > 0 else 0
+        median_income = int(demo_data[1])    if len(demo_data) > 1 else 0
+        median_age    = float(demo_data[2])  if len(demo_data) > 2 else 38.0
+
+        # Income distribution from B19001_* brackets (positions 3-19)
+        if len(demo_data) > 19:
+            def _hh(pos):
+                v = demo_data[pos]
+                return int(v) if v not in (None, "", "-") else 0
+
+            total_hh      = _hh(3)
+            below_50k_hh  = sum(_hh(i) for i in range(4,  13))   # 9 brackets < $50k
+            mid_hh        = sum(_hh(i) for i in range(13, 16))   # 3 brackets $50k-$100k
+            above_100k_hh = sum(_hh(i) for i in range(16, 20))   # 4 brackets > $100k
+
+            if total_hh > 0:
+                income_dist = {
+                    "below_50k":   round(below_50k_hh  / total_hh, 4),
+                    "50k_100k":    round(mid_hh         / total_hh, 4),
+                    "above_100k":  round(above_100k_hh  / total_hh, 4),
+                }
+            else:
+                income_dist = _US_INCOME_FALLBACK
+        else:
+            income_dist = _US_INCOME_FALLBACK
+
+        # Age distribution approximated from median age (Census B01002_001E)
+        # Younger metros have more 18-34; older metros skew 55+
+        if median_age < 34:
+            age_dist = {"18_34": 0.36, "35_54": 0.34, "55_plus": 0.30}
+        elif median_age < 38:
+            age_dist = {"18_34": 0.30, "35_54": 0.36, "55_plus": 0.34}
+        elif median_age < 42:
+            age_dist = {"18_34": 0.26, "35_54": 0.36, "55_plus": 0.38}
+        else:
+            age_dist = {"18_34": 0.22, "35_54": 0.34, "55_plus": 0.44}
+
     except Exception:
         population    = 0
         median_income = 0
+        income_dist   = _US_INCOME_FALLBACK
+        age_dist      = _US_AGE_FALLBACK
 
     # Parse Census business density
     cbp_raw = census.get("business_density", [])
@@ -135,19 +177,11 @@ def build_ms(
             },
         },
         "demographic_data": {
-            "target_msa_population":  population,
+            "target_msa_population":   population,
             "median_household_income": median_income,
             "population_growth_rate":  0.0,
-            "age_distribution": {
-                "18_34": 0.0,
-                "35_54": 0.0,
-                "55_plus": 0.0,
-            },
-            "income_distribution": {
-                "below_50k":   0.0,
-                "50k_100k":    0.0,
-                "above_100k":  0.0,
-            },
+            "age_distribution":        age_dist,
+            "income_distribution":     income_dist,
         },
         "market_data": {
             "market_saturation_index": elasticity.get("market_elasticity", 0.5),
@@ -159,7 +193,7 @@ def build_ms(
             "cpi_forecast":           forecasts.get("cpi_forecast",           {"values": [], "uncertainty_upper": [], "uncertainty_lower": []}),
             "unemployment_forecast":  forecasts.get("unemployment_forecast",  {"values": [], "uncertainty_upper": [], "uncertainty_lower": []}),
             "gdp_forecast":           forecasts.get("gdp_forecast",           {"values": [], "uncertainty_upper": [], "uncertainty_lower": []}),
-            "sector_spending_forecast": {"values": [], "uncertainty_upper": [], "uncertainty_lower": []},
+            "sector_spending_forecast": forecasts.get("sector_spending_forecast", {"values": [], "uncertainty_upper": [], "uncertainty_lower": []}),
             "wage_forecast":          {"values": [], "uncertainty_upper": [], "uncertainty_lower": []},
             "purchasing_power_forecast": {"values": [], "uncertainty_upper": [], "uncertainty_lower": []},
         },

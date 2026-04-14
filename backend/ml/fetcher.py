@@ -187,7 +187,20 @@ def fetch_census(context: dict) -> dict:
         # American Community Survey - demographic data
         acs_url = "https://api.census.gov/data/2023/acs/acs5"
         acs_params = {
-            "get": "B01003_001E,B19013_001E,B01002_001E",
+            # B01003_001E = total population
+            # B19013_001E = median household income
+            # B01002_001E = median age
+            # B19001_001E = total households (denominator for income distribution)
+            # B19001_002E..010E = income brackets below $50k
+            # B19001_011E..013E = income brackets $50k-$100k
+            # B19001_014E..017E = income brackets above $100k
+            "get": (
+                "B01003_001E,B19013_001E,B01002_001E,"
+                "B19001_001E,B19001_002E,B19001_003E,B19001_004E,B19001_005E,"
+                "B19001_006E,B19001_007E,B19001_008E,B19001_009E,B19001_010E,"
+                "B19001_011E,B19001_012E,B19001_013E,"
+                "B19001_014E,B19001_015E,B19001_016E,B19001_017E"
+            ),
             "for": f"metropolitan statistical area/micropolitan statistical area:{msa_code}",
             "key": CENSUS_API_KEY,
         }
