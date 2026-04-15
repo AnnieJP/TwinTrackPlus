@@ -43,5 +43,9 @@ backend/data/simulations/
 *.sln
 *.sw?
 
+# Presentation files
+*.pptx
+*.ppt
+
 # OS files
 Thumbs.db

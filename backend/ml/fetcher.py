@@ -248,15 +248,59 @@ def fetch_census(context: dict) -> dict:
 NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")
 
 
+# NAICS code → specific search terms that produce relevant news
+_NAICS_SEARCH_TERMS: dict[str, str] = {
+    "722515": "coffee cafe beverage",
+    "722511": "restaurant food dining",
+    "722513": "fast food restaurant",
+    "722514": "catering food service",
+    "722410": "bar tavern nightlife",
+    "311811": "bakery bread pastry",
+    "448140": "clothing apparel retail",
+    "448110": "clothing fashion retail",
+    "448210": "shoe footwear retail",
+    "812112": "hair salon beauty",
+    "812111": "barbershop grooming",
+    "812113": "nail salon beauty",
+    "713940": "gym fitness wellness",
+    "453110": "florist flowers",
+    "445110": "grocery food supermarket",
+    "445131": "convenience store",
+    "453220": "gift shop retail",
+    "448310": "jewelry retail",
+    "451211": "bookstore retail",
+    "453910": "pet store",
+    "446110": "pharmacy drugstore",
+    "444110": "hardware home improvement",
+    "442110": "furniture home retail",
+    "452319": "retail consumer spending",
+}
+
+# Stop words to strip from NAICS labels when no NAICS mapping exists
+_LABEL_STOPWORDS = {"and", "&", "the", "of", "or", "for", "a", "an", "bars", "stores", "store", "shops", "shop", "services"}
+
+
 def _simplified_category(business_type: str) -> str:
     """
-    Reduce a full NAICS label to 1-2 searchable words.
-    "Bakery / baked goods retail" → "bakery"
-    "Full-service restaurants"    → "restaurant"
+    Reduce a full NAICS label to 1-2 searchable words, skipping stopwords/symbols.
+    "Snack & beverage bars"     → "snack beverage"
+    "Full-service restaurants"  → "full service"
+    "Bakery / baked goods"      → "bakery baked"
     """
     bt = business_type.lower().split("/")[0].split("-")[0].strip()
-    words = bt.split()[:2]
-    return " ".join(words)
+    words = [w for w in bt.split() if w not in _LABEL_STOPWORDS][:2]
+    return " ".join(words) if words else "retail"
+
+
+def _news_search_term(context: dict) -> str:
+    """
+    Return the best search term for this business context.
+    Prefers the NAICS-keyed mapping; falls back to cleaned label words.
+    """
+    naics = context.get("naics_code", "")
+    if naics in _NAICS_SEARCH_TERMS:
+        return _NAICS_SEARCH_TERMS[naics]
+    return _simplified_category(context.get("business_type", "retail"))
 
 
 def fetch_news(context: dict) -> dict:
@@ -267,12 +311,12 @@ def fetch_news(context: dict) -> dict:
     """
     def _fetch():
         url = "https://newsdata.io/api/1/latest"
-        category = _simplified_category(context.get("business_type", "retail"))
+        category = _news_search_term(context)
 
         # Progressively broader queries — stop at first non-empty result
         queries = [
-            f"{category} small business economy",
-            f"small business {category} retail consumer",
+            f"{category} small business",
+            f"{category} economy consumer",
             "small business retail economy consumer spending",
             "small business economy inflation consumer",
         ]
@@ -313,7 +357,7 @@ def fetch_news(context: dict) -> dict:
             ]
         }
 
-    suffix = _simplified_category(context.get("business_type", "retail")).replace(" ", "_")
+    suffix = _news_search_term(context).split()[0]  # e.g. "coffee" from "coffee cafe beverage"
     return get_or_fetch("newsdata", _fetch, suffix=suffix)
 
 

@@ -208,7 +208,10 @@ def analyze_sentiment(articles: list, context: dict) -> dict:
             '    {"headline": "...", "relevance": "...", "impact": "positive|negative|neutral"}\n'
             '  ]\n'
             '}\n'
-            "Maximum 5 flags. Include at least one of each impact type if the articles support it."
+            "Maximum 5 flags. ONLY include articles that are directly relevant to this specific "
+            "business type and its local market. Skip any article about unrelated industries, "
+            "companies, or distant regions that would not affect this business. "
+            "If fewer than 2 articles are genuinely relevant, return an empty flags list."
         ),
     )
 

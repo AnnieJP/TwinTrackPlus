@@ -5,30 +5,49 @@ def _compute_price_elasticity(cpi_series: list, sector_spending_series: list) ->
     """
     Price elasticity modifier — how sensitive customers are to price changes.
 
-    High CPI + falling sector spending = high elasticity (customers push back more)
-    Low CPI + rising sector spending = low elasticity (customers absorb price changes)
+    High YoY CPI growth + falling sector spending = high elasticity (customers push back more)
+    Low YoY CPI growth + rising sector spending = low elasticity (customers absorb price changes)
 
     Returns value between -2.0 and -0.5 (negative by convention).
     sim_layer formula: volume_change = price_elasticity × price_change_pct
     Negative value means rising price → falling demand.
     """
-    cpi_current = get_latest(cpi_series)
-    cpi_trend   = get_trend(cpi_series)
+    # Use YoY CPI change rate rather than absolute index level.
+    # The absolute FRED CPI value (~314 in 2024) was always above the old threshold
+    # of 310, meaning the high-inflation modifier fired on every single simulation.
+    if len(cpi_series) >= 12:
+        cpi_now      = float(cpi_series[-1]["value"])
+        cpi_year_ago = float(cpi_series[-12]["value"])
+        cpi_yoy      = (cpi_now - cpi_year_ago) / cpi_year_ago if cpi_year_ago else 0.0
+    elif len(cpi_series) >= 2:
+        cpi_yoy = (float(cpi_series[-1]["value"]) - float(cpi_series[0]["value"])) / float(cpi_series[0]["value"])
+    else:
+        cpi_yoy = 0.03  # assume modest inflation if no data
 
-    # Baseline elasticity
     elasticity = 1.0
 
-    # CPI modifier — higher inflation = more price sensitive customers
-    if cpi_current > 310:       # High inflation environment
+    # Inflationary pressure modifier (YoY rate, not absolute index)
+    if cpi_yoy > 0.06:      # > 6% — high inflation (e.g. 2022 spike)
         elasticity += 0.5
-    elif cpi_current > 290:     # Moderate inflation
-        elasticity += 0.2
-
-    # Trend modifier
-    if cpi_trend == "rising":
+    elif cpi_yoy > 0.04:    # 4–6% — elevated
         elasticity += 0.3
+    elif cpi_yoy > 0.025:   # 2.5–4% — moderate
+        elasticity += 0.1
+    # < 2.5% = within normal range, no modifier
+
+    # CPI momentum — rising trend signals more pressure ahead
+    cpi_trend = get_trend(cpi_series)
+    if cpi_trend == "rising":
+        elasticity += 0.2
     elif cpi_trend == "falling":
         elasticity -= 0.2
+
+    # Sector spending — if consumers are already cutting back they're more price-sensitive
+    spending_trend = get_trend(sector_spending_series)
+    if spending_trend == "falling":
+        elasticity += 0.2
+    elif spending_trend == "rising":
+        elasticity -= 0.1
 
     # Negate — price elasticity of demand is negative by convention
     return round(-max(0.5, min(2.0, elasticity)), 3)
@@ -94,28 +113,46 @@ def _compute_demand_elasticity(sector_spending_series: list, gdp_series: list) -
 
 def _compute_market_elasticity(business_density: dict) -> float:
     """
-    Market elasticity — how saturated the local market is.
+    Market elasticity — how saturated the national market is for this NAICS sector.
 
-    High business density = saturated = harder to capture market share
-    Low business density = opportunity = easier to grow
+    Sums establishments across all state rows from Census CBP, then normalises
+    by US population (≈331M → 3,310 units of 100k) to get a per-100k density.
+    This replaces single-state absolute thresholds that had no population context.
 
     Returns value between 0.0 (low saturation) and 1.0 (high saturation).
     """
+    _US_POP_100K = 3_310   # ~331M / 100k
+
     try:
-        # Census CBP returns list — first row is header, second is data
         rows = business_density.get("business_density", [])
         if len(rows) < 2:
-            return 0.5  # Default mid-saturation
+            return 0.5
 
-        data_row = rows[1]
-        establishments = int(data_row[0]) if data_row[0] else 0
+        # Sum across all state rows (row 0 is the header)
+        total = 0
+        for row in rows[1:]:
+            try:
+                val = str(row[0]).replace(",", "").strip() if row else ""
+                if val.isdigit():
+                    total += int(val)
+            except (ValueError, TypeError, IndexError):
+                continue
 
-        # Rough saturation scale based on number of establishments in MSA
-        if establishments > 1000:
+        if total == 0:
+            return 0.5
+
+        density_per_100k = total / _US_POP_100K
+
+        # Thresholds calibrated against real NAICS counts:
+        #   722515 coffee shops  ≈ 80k  →  ~24/100k  → 0.7
+        #   722511 restaurants   ≈ 300k → ~90/100k   → 0.9
+        #   713940 gyms          ≈ 40k  → ~12/100k   → 0.5
+        #   451211 bookstores    ≈ 10k  → ~3/100k    → 0.3
+        if density_per_100k > 50:
             return 0.9
-        elif establishments > 500:
+        elif density_per_100k > 20:
             return 0.7
-        elif establishments > 100:
+        elif density_per_100k > 8:
             return 0.5
         else:
             return 0.3

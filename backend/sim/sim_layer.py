@@ -30,51 +30,6 @@ OP_DIR    = os.path.join(_DATA_DIR, "op")
 
 # ── Confidence Score ──────────────────────────────────────────────────────────
 
-# For each use case, which direction of each indicator is "favorable" to the business.
-# Favorable trend → higher stability score → higher confidence.
-_FAVORABLE: dict[str, dict[str, str]] = {
-    "pricing": {
-        "cpi":                    "stable",   # rising CPI hurts consumer willingness to pay
-        "unemployment":           "falling",  # falling unemployment → more disposable income
-        "gdp":                    "rising",   # growing economy → more spending
-        "sector_consumer_spending": "rising",
-        "interest_rate":          "falling",  # lower rates → more business investment possible
-    },
-    "target_audience": {
-        "cpi":                    "stable",
-        "unemployment":           "falling",
-        "gdp":                    "rising",
-        "sector_consumer_spending": "rising",
-        "interest_rate":          "stable",
-    },
-    "franchising": {
-        "cpi":                    "stable",
-        "unemployment":           "stable",   # stable labor pool
-        "gdp":                    "rising",
-        "sector_consumer_spending": "rising",
-        "interest_rate":          "falling",  # lower rates reduce capital cost
-    },
-}
-
-_TREND_SCORES = {
-    "stable":       0.85,
-    "favorable":    0.70,
-    "unfavorable":  0.30,
-}
-
-
-def _trend_stability(trend: str, indicator: str, use_case: str) -> float:
-    """
-    Rule: stable → 0.85, moving in favorable direction → 0.70,
-    moving against business → 0.30.
-    """
-    favorable = _FAVORABLE.get(use_case, {}).get(indicator, "stable")
-    if trend == "stable":
-        return _TREND_SCORES["stable"]
-    if trend == favorable:
-        return _TREND_SCORES["favorable"]
-    return _TREND_SCORES["unfavorable"]
-
 
 def _prophet_uncertainty_score(forecasts: dict) -> float:
     """
@@ -97,50 +52,169 @@ def _prophet_uncertainty_score(forecasts: dict) -> float:
         mean_band = sum(u - l for u, l in zip(upper, lower)) / len(vals)
         scores.append(max(0.0, 1.0 - (mean_band / abs(mean_val))))
 
-    return sum(scores) / len(scores) if scores else 0.50
+    # No real forecast data → penalise to 0.35 (absent data is a weakness,
+    # not a neutral state — the old default of 0.50 was misleading)
+    return sum(scores) / len(scores) if scores else 0.35
 
 
-def compute_confidence_score(ms: dict, use_case: str) -> float:
+def _input_plausibility_score(ip1: dict, ip2: dict, use_case: str) -> float:
+    """
+    Score 0–1: are the inputs internally consistent and within the model's
+    calibrated operating range?
+
+    Catches garbage-in / extrapolation-territory before they inflate confidence.
+    """
+    revenue = float(ip1.get("monthly_revenue", 0))
+    costs   = float(ip1.get("monthly_costs",   0))
+
+    if revenue <= 0:
+        return 0.10   # no revenue data → cannot trust any output
+
+    margin = (revenue - costs) / revenue
+    score  = 1.0
+
+    if not (0.0 <= margin <= 0.90):
+        score -= 0.30   # implausible margin (negative or suspiciously high)
+
+    if use_case == "pricing":
+        pct = abs(float(ip2.get("price_change_pct", 0)))
+        if pct > 20:
+            score -= 0.20   # extrapolation territory — model wasn't calibrated here
+        if pct > 35:
+            score -= 0.20   # severe extrapolation — double-penalise
+
+    elif use_case == "franchising":
+        if margin < 0.15:
+            score -= 0.30   # margin too thin to support replicable franchise unit economics
+
+    return round(max(0.10, min(1.0, score)), 3)
+
+
+def _assumption_alignment_score(ms: dict, ip1: dict, ip2: dict, use_case: str) -> float:
+    """
+    Score 0–1: do the model's core assumptions hold given current market signals?
+
+    This replaces the old 'volatility_stability' component.  The key difference:
+    instead of scoring whether the macro environment is *good*, we score whether
+    the simulation's specific causal assumptions are *valid*.
+
+    Examples:
+      pricing   — core assumption: customers absorb the price change.
+                  Strained by high price elasticity + rising CPI.
+      audience  — core assumption: the target demographic exists locally and
+                  can be reached with the stated budget.
+      franchise — core assumption: capital is accessible and unit economics replicate.
+                  Strained by rising interest rates or thin margins.
+    """
+    econ  = ms.get("economic_indicators", {})
+    elast = ms.get("elasticity_modifiers", {})
+    demo  = ms.get("demographic_data", {})
+
+    score = 0.80   # start moderately confident; deductions are evidence-based
+
+    if use_case == "pricing":
+        change_pct   = float(ip2.get("price_change_pct", 0))
+        price_elast  = float(elast.get("price_elasticity", -1.0))
+        cpi_trend    = econ.get("cpi", {}).get("trend", "stable")
+        sector_trend = econ.get("sector_consumer_spending", {}).get("trend", "stable")
+
+        # Assumption: customers absorb the hike.
+        # Very negative elasticity = demand is highly price-sensitive.
+        if change_pct > 0 and price_elast < -1.5:
+            score -= 0.20
+        # Double squeeze: asking customers to pay more while CPI already erodes purchasing power.
+        if change_pct > 0 and cpi_trend == "rising":
+            score -= 0.15
+        # Sector shrinking: a price hike into falling demand compounds risk.
+        if change_pct > 0 and sector_trend == "falling":
+            score -= 0.15
+
+    elif use_case == "target_audience":
+        target_demo = ip2.get("audience_shift", ip2.get("target_demographic", "35_54"))
+        income_dist = demo.get("income_distribution", {})
+        mkt_budget  = float(ip2.get("marketing_spend_pct", ip2.get("marketing_budget_pct", 0.08)))
+        if mkt_budget > 1:
+            mkt_budget /= 100   # normalise pct-as-integer (e.g. 8 → 0.08)
+
+        # Assumption: the target demographic exists in meaningful numbers locally.
+        segment_share = {
+            "18_34":   income_dist.get("below_50k",   0.45),
+            "35_54":   income_dist.get("50k_100k",    0.35),
+            "55_plus": income_dist.get("above_100k",  0.20),
+        }.get(target_demo, 0.30)
+
+        if segment_share < 0.15:
+            score -= 0.20   # target segment too small locally to drive material lift
+        if mkt_budget < 0.05:
+            score -= 0.15   # underfunded — can't meaningfully reach the segment
+
+    elif use_case == "franchising":
+        interest_trend = econ.get("interest_rate", {}).get("trend", "stable")
+        revenue        = float(ip1.get("monthly_revenue", 0))
+        costs          = float(ip1.get("monthly_costs",   0))
+        margin         = (revenue - costs) / revenue if revenue > 0 else 0.0
+
+        # Assumption: capital is accessible and unit economics replicate.
+        if interest_trend == "rising":
+            score -= 0.20   # higher borrowing cost threatens franchisee ROI
+        if margin < 0.20:
+            score -= 0.20   # thin margins → hard for new locations to be profitable
+
+    return round(max(0.10, min(1.0, score)), 3)
+
+
+def compute_confidence_score(ms: dict, use_case: str,
+                             ip1: dict | None = None,
+                             ip2: dict | None = None) -> float:
     """
     Weighted formula:
-        confidence = 0.40 × volatility_stability
-                   + 0.35 × prophet_certainty
-                   + 0.25 × sentiment_normalized   (sentiment −1..1 → 0..1)
+        confidence = 0.30 × input_plausibility
+                   + 0.40 × assumption_alignment
+                   + 0.30 × forecast_data_quality
+
+    All three components measure model trustworthiness, not environment
+    favourability (the old formula conflated the two):
+
+    input_plausibility    — are inputs consistent and within calibrated range?
+    assumption_alignment  — do the model's causal assumptions hold given market signals?
+    forecast_data_quality — are projections grounded in real forecast data?
+
+    The Critique Agent applies further deductions post-simulation for specific
+    contradictions it identifies through reasoning.
 
     Returns a float in [0, 1].
     """
-    ei = ms.get("economic_indicators", {})
+    ip1 = ip1 or {}
+    ip2 = ip2 or {}
 
-    # Component 1 — economic volatility (40%)
-    key_indicators = ["cpi", "unemployment", "gdp", "sector_consumer_spending", "interest_rate"]
-    stab_scores = [
-        _trend_stability(ei[k].get("trend", "stable"), k, use_case)
-        for k in key_indicators if k in ei
-    ]
-    volatility_score = sum(stab_scores) / len(stab_scores) if stab_scores else 0.50
+    plausibility  = _input_plausibility_score(ip1, ip2, use_case)
+    alignment     = _assumption_alignment_score(ms, ip1, ip2, use_case)
+    forecast_qual = _prophet_uncertainty_score(ms.get("forecasts", {}))
 
-    # Component 2 — Prophet forecast certainty (35%)
-    uncertainty_score = _prophet_uncertainty_score(ms.get("forecasts", {}))
-
-    # Component 3 — news sentiment (25%)
-    raw_sentiment     = ms.get("news_context", {}).get("sentiment_score", 0.0)
-    sentiment_norm    = (raw_sentiment + 1.0) / 2.0  # −1..1 → 0..1
-
-    score = 0.40 * volatility_score + 0.35 * uncertainty_score + 0.25 * sentiment_norm
-    return round(score, 3)
+    score = 0.30 * plausibility + 0.40 * alignment + 0.30 * forecast_qual
+    return round(min(1.0, max(0.0, score)), 3)
 
 
 # ── Projection Builder ────────────────────────────────────────────────────────
+
+_PROJECTION_DECAY = 0.92   # per-month decay of the OP1→OP2 gap
+# A price hike or audience shift has its strongest effect in month 1 (customers
+# react immediately) then the market absorbs it — competitors adjust, customers
+# habituate, word-of-mouth settles. By month 6: effect is at ~0.92^5 ≈ 66%.
+# OP1 is unaffected (decision_ratio = 1.0 → decay term is 0).
+
 
 def _build_projections(ms: dict, base_revenue: float, base_footfall: float,
                        decision_ratio: float = 1.0, horizon: int = 6) -> dict:
     """
     Use Prophet sector_spending_forecast from MS to project an N-month trajectory.
-    The decision_ratio (OP2_revenue / OP1_revenue) scales OP2 projections on top.
-    horizon is passed from IP2.forecast_horizon (default 6, clamped 1–24).
+    The decision_ratio (OP2_revenue / OP1_revenue) scales OP2 projections on top,
+    with exponential decay so the OP1/OP2 gap narrows over time rather than staying
+    constant forever (markets absorb pricing and audience changes gradually).
 
-    Rule: growth_factor = forecast_value / current_value
-          projected = base × growth_factor × decision_ratio
+    Rule: growth_factor   = forecast_value / current_value
+          decayed_ratio_t = 1 + (decision_ratio − 1) × DECAY^t
+          projected       = base × growth_factor × decayed_ratio_t
     """
     ei            = ms.get("economic_indicators", {})
     fc            = ms.get("forecasts", {})
@@ -151,16 +225,18 @@ def _build_projections(ms: dict, base_revenue: float, base_footfall: float,
     footfall_nm: list[dict] = []
 
     for i, entry in enumerate(sector_fc[:horizon]):
-        val    = entry["value"] if isinstance(entry, dict) else current_spend
-        growth = val / current_spend
-        revenue_nm.append({"month": i + 1, "value": round(base_revenue * growth * decision_ratio, 2)})
-        footfall_nm.append({"month": i + 1, "value": round(base_footfall * growth * decision_ratio, 0)})
+        val          = entry["value"] if isinstance(entry, dict) else current_spend
+        growth       = val / current_spend
+        decayed      = 1.0 + (decision_ratio - 1.0) * (_PROJECTION_DECAY ** i)
+        revenue_nm.append({"month": i + 1, "value": round(base_revenue  * growth * decayed, 2)})
+        footfall_nm.append({"month": i + 1, "value": round(base_footfall * growth * decayed, 0)})
 
-    # Fallback: if MS has no forecast data, project flat
+    # Fallback: if MS has no forecast data, project flat with decay applied
     if not revenue_nm:
         for i in range(horizon):
-            revenue_nm.append({"month": i + 1, "value": round(base_revenue * decision_ratio, 2)})
-            footfall_nm.append({"month": i + 1, "value": round(base_footfall * decision_ratio, 0)})
+            decayed = 1.0 + (decision_ratio - 1.0) * (_PROJECTION_DECAY ** i)
+            revenue_nm.append({"month": i + 1, "value": round(base_revenue  * decayed, 2)})
+            footfall_nm.append({"month": i + 1, "value": round(base_footfall * decayed, 0)})
 
     market_growth = ei.get("sector_growth_rate", {}).get("current", 0.0)
     return {
@@ -269,10 +345,19 @@ def _target_audience(ip1: dict, ip2: dict, ms: dict) -> tuple[dict, dict, float,
     reach_increase       = float(ip2.get("expected_reach_increase", 0.15))
     marketing_spend_pct  = float(ip2.get("marketing_spend_increase", 0.10))
 
-    # Rule: demographic ticket multiplier — informed by Census income share
-    high_income_share = float(income_dist.get("above_100k", 0.20))
+    # Demographic ticket multiplier scaled by the income tier that corresponds to
+    # the target segment — each group's spending power comes from its own income tier,
+    # not the city-wide above_100k share (the old code applied the high-income share
+    # as a booster even for 18-34 targets, which skewed results in wealthy metros).
     _BASE_DEMO_MULT = {"18_34": 0.95, "35_54": 1.08, "55_plus": 1.12}
-    demo_mult = _BASE_DEMO_MULT.get(target_demo, 1.0) * (1.0 + high_income_share * 0.20)
+    _DEMO_INCOME_KEY = {
+        "18_34":   "below_50k",   # young adults concentrated in lower income brackets
+        "35_54":   "50k_100k",    # peak earning years → middle income tier
+        "55_plus": "above_100k",  # established wealth / retirement savings
+    }
+    income_key        = _DEMO_INCOME_KEY.get(target_demo, "50k_100k")
+    segment_income    = float(income_dist.get(income_key, 0.33))
+    demo_mult = _BASE_DEMO_MULT.get(target_demo, 1.0) * (1.0 + segment_income * 0.20)
 
     new_footfall   = footfall_op1 * (1 + reach_increase) * (1 + sentiment * 0.05)
     new_avg_ticket = avg_ticket_op1 * demo_mult
@@ -342,9 +427,17 @@ def _franchising(ip1: dict, ip2: dict, ms: dict) -> tuple[dict, dict, float, flo
 
     new_revenue_raw  = n_loc * rev_per_loc * (1 - saturation_discount)
     new_revenue_adj  = new_revenue_raw * (1 + sentiment * 0.05)
-    # Royalty income: ongoing % of each new location's revenue paid to the franchisor
-    royalty_income   = new_revenue_adj * royalty_pct
-    rev_op2          = rev_op1 + new_revenue_adj + royalty_income
+
+    # Revenue model depends on ownership structure:
+    #   royalty_pct > 0  → franchisee-operated: owner collects royalty % only
+    #                       (franchisee keeps the rest — adding full revenue AND
+    #                        royalty would double-count the same cash flow)
+    #   royalty_pct == 0 → company-owned expansion: owner captures full revenue
+    if royalty_pct > 0:
+        rev_from_new = new_revenue_adj * royalty_pct
+    else:
+        rev_from_new = new_revenue_adj
+    rev_op2 = rev_op1 + rev_from_new
 
     # New location costs: fixed (rent, utilities for new location) estimated at 60% of
     # original fixed costs, variable at 80% of original variable costs (less efficient initially).
@@ -420,7 +513,7 @@ def run_simulation(ms: dict, ip1: dict, ip2: dict) -> dict:
     formula_fn                               = _FORMULA[use_case]
     fin_op1, fin_op2, foot_op1, foot_op2    = formula_fn(ip1, ip2, ms)
 
-    confidence   = compute_confidence_score(ms, use_case)
+    confidence   = compute_confidence_score(ms, use_case, ip1=ip1, ip2=ip2)
     sentiment    = ms.get("news_context", {}).get("sentiment_score", 0.0)
     flags        = ms.get("news_context", {}).get("flags", [])
 

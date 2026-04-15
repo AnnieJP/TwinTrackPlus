@@ -778,7 +778,7 @@ export default function TwinTrack() {
       {/* ── Sidebar ── */}
       <aside style={css.sidebar}>
         <div style={css.sidebarBrand}>
-          <p style={css.sidebarTag}>WEHack UTD</p>
+          <p style={css.sidebarTag}>TwinTrack</p>
           <h1 style={css.sidebarTitle}>TwinTrack</h1>
           <p style={css.sidebarDesc}>Digital twin economic simulator. Model decisions. Compare outcomes.</p>
         </div>

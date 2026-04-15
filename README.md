@@ -1,45 +1,47 @@
 # TwinTrack — Digital Twin Economic Simulator
 
-## What It Does
-
 TwinTrack lets a small business owner register their business as a **digital twin** — a structured snapshot of their financials, costs, and sales profile — and then run **what-if simulations** before making real decisions.
 
 Each simulation runs a full pipeline:
 1. Pulls live economic data (CPI, unemployment, GDP, consumer spending, local market density, news sentiment)
-2. Computes price elasticity and market context using a local LLM agent
+2. Resolves industry codes and computes elasticity modifiers using a local LLM agent
 3. Models the financial outcome under the proposed change
-4. Returns OP1 (control baseline) and OP2 (experiment result) with a plain-English recommendation
+4. Returns **OP1** (control baseline) and **OP2** (experiment result) with a plain-English recommendation and a confidence score
 
-**Three use cases:**
-- **Pricing changes** — raise or lower average price; models demand response via price elasticity derived from CPI trends
-- **Target audience** — shift to a new demographic segment; models ticket size, footfall, and marketing cost impact
-- **Franchise expansion** — open new locations; models upfront costs, amortized over 36 months, with break-even projection
+---
+
+## Simulation Use Cases
+
+| Use case | What it models |
+|----------|---------------|
+| **Pricing changes** | Raise or lower average price; demand response via price elasticity derived from live YoY CPI trends |
+| **Target audience** | Shift to a new demographic segment; models ticket size, footfall, and marketing cost impact weighted by actual census income distribution |
+| **Franchise expansion** | Open new locations; distinguishes franchisee-operated (royalty only) vs. company-owned (full revenue); amortises upfront costs over 36 months |
 
 ---
 
 ## Architecture
 
 ```
-twintrack/          ← React + Vite frontend (port 5173)
+twintrack/          ← React 19 + Vite frontend (port 5173)
 backend/
   server.py         ← ThreadingHTTPServer (port 8765)
   agents/           ← Multi-agent system (Ollama-backed)
-    base.py         ← Shared Ollama client + agentic tool-use loop
+    base.py         ← Shared Ollama client + tool-use loop
     data_agent.py   ← NAICS/MSA resolution + news sentiment
     enrichment_agent.py  ← NL parameter extraction from user descriptions
     simulation_agent.py  ← Demographic resolution + recommendation generation
     orchestrator.py ← Python coordinator sequencing the agents
   ml/               ← Market data + forecasting layer
-    fetcher.py      ← FRED, BLS, BEA, Census, NewsAPI
+    fetcher.py      ← FRED, BLS, BEA, Census, NewsData.io
     context.py      ← NAICS/MSA resolver (agent-backed)
-    elasticity.py   ← Price/labor/market elasticity
+    elasticity.py   ← Price / labor / market elasticity
     forecaster.py   ← ARIMA 12-month projections
-    sentiment.py    ← News sentiment scoring (agent-backed)
-    ms_builder.py   ← Builds MS (market snapshot) JSON
+    ms_builder.py   ← Builds the market snapshot (MS) JSON
     main.py         ← ML pipeline entry point
   sim/
     sim_bridge.py   ← Translates frontend form → IP1/IP2
-    sim_layer.py    ← Financial simulation engine
+    sim_layer.py    ← Financial simulation engine + confidence score
   data/
     base/           ← Enrollment JSON files
     ms/             ← Market snapshot outputs
@@ -47,7 +49,8 @@ backend/
     cache/          ← API response cache (by date)
 ```
 
-**Request flow for a simulation:**
+### Request flow
+
 ```
 Frontend → POST /api/simulate { business_id, sim }
   → server.py: load twin from disk, recompute IP1
@@ -60,6 +63,50 @@ Frontend → POST /api/simulate { business_id, sim }
       → simulation_agent (Ollama)   generate plain-English recommendation
   → return {ok, result: {op1, op2, recommendation, use_case}}
 ```
+
+---
+
+## Simulation Engine Details
+
+### Elasticity modifiers (`ml/elasticity.py`)
+
+Four modifiers are computed from live data and applied to the simulation:
+
+| Modifier | Inputs | Notes |
+|----------|--------|-------|
+| `price_elasticity` | FRED CPI (YoY rate), BEA sector spending | Uses YoY growth rate, not absolute CPI level; thresholds: >6% = high inflation |
+| `labor_elasticity` | BLS unemployment, BLS wage trend | Low unemployment → expensive, hard-to-hire market |
+| `demand_elasticity` | BEA sector spending, FRED GDP trend | Ranges −1.0 (contracting) to +1.0 (growing) |
+| `market_elasticity` | Census CBP establishment count | Summed across all 50 states, normalised per 100k US population |
+
+### Confidence score (`sim/sim_layer.py`)
+
+Three components, each 0–1, weighted into a final 0–100% score:
+
+```
+score = 0.30 × input_plausibility
+      + 0.40 × assumption_alignment
+      + 0.30 × forecast_quality
+```
+
+- **Input plausibility** — checks that revenue > 0, margin is within 0–90%, and that any proposed price change or franchise margin are physically reasonable
+- **Assumption alignment** — checks whether the proposed decision conflicts with market conditions (e.g. raising prices during high CPI and falling consumer spending)
+- **Forecast quality** — Prophet uncertainty band width; defaults to 0.35 (penalised) when no historical data is available
+- A **critique agent** (ReAct loop) applies an additional −0.05 to −0.30 penalty after reviewing the OP1→OP2 delta against the market snapshot
+
+### Revenue projections
+
+OP1 and OP2 revenue projections use an **exponential decay** to converge over time:
+
+```python
+decayed_ratio = 1.0 + (decision_ratio - 1.0) × 0.92^month
+```
+
+This prevents the simulation from projecting a permanent fixed gap between control and experiment — the uplift (or decline) gradually fades toward baseline as market forces re-equilibrate.
+
+### News relevance
+
+News articles are fetched via **NewsData.io** using NAICS-keyed search terms (e.g. NAICS 722515 → `"coffee cafe beverage"`). The sentiment agent is instructed to exclude articles unrelated to the specific business type and local market, returning an empty flags list when fewer than 2 articles are genuinely relevant.
 
 ---
 
@@ -99,8 +146,8 @@ CENSUS_API_KEY=...
 NEWSDATA_API_KEY=...
 ```
 
-| Key | Get it from |
-|-----|-------------|
+| Key | Where to get it |
+|-----|----------------|
 | `FRED_API_KEY` | [fred.stlouisfed.org/docs/api](https://fred.stlouisfed.org/docs/api/api_key.html) |
 | `BLS_API_KEY` | [data.bls.gov/registrationEngine](https://data.bls.gov/registrationEngine/) |
 | `BEA_API_KEY` | [apps.bea.gov/API/signup](https://apps.bea.gov/API/signup/) |
@@ -136,21 +183,20 @@ Open **http://localhost:5173** in your browser.
 ## Usage
 
 ### Step 1 — Register your business
-Go to **Register business** in the sidebar. Enter your financials, cost breakdown, loan details, sales channel, and product info. The server assigns a `business_id` (integer, starting at 1) and writes:
-- `backend/data/base/input_newbusiness_<date>.json`
+Go to **Register business** in the sidebar. Enter your financials, cost breakdown, loan details, sales channel, and product info. The server assigns a `business_id` (integer, starting at 1) and writes a JSON twin to `backend/data/base/`.
 
 ### Step 2 — Run a simulation
-Go to **Run simulation**. Select your registered business, pick a use case, and optionally describe your decision in plain English. The enrichment agent will extract and merge structured parameters from your description — no need to fill in every numeric field.
+Go to **Run simulation**. Select your registered business, pick a use case, fill in the parameters, and optionally describe your decision in plain English. The enrichment agent extracts and merges structured parameters from your description — no need to fill in every numeric field.
 
-Click **Run simulation engine** to execute the full pipeline. Results appear as OP1 (control) and OP2 (experiment) with an Ollama-generated recommendation.
+Click **Run simulation engine** to execute the full pipeline.
 
 ### Step 3 — View results
 The dashboard shows:
-- Revenue, margin, and footfall delta (OP2 vs OP1)
-- 6-month revenue projection chart (ARIMA)
-- Confidence score
-- News sentiment (from local market news)
-- Plain-English recommendation
+- Revenue, margin, profit, foot traffic, and COGS delta (OP2 vs OP1)
+- 2-month revenue projection chart with convergence decay
+- Confidence score (model trustworthiness, not environment favorability)
+- News sentiment with relevant flags for your business type and market
+- Plain-English recommendation from the simulation agent
 
 ---
 
@@ -164,19 +210,18 @@ The dashboard shows:
 | `POST` | `/api/update-twin-layer` | Update business financials (versioned) |
 | `POST` | `/api/simulate` | Run a what-if simulation, returns OP1 + OP2 + recommendation |
 
-> See `API_SCHEMA.md` for full request/response shapes.
-
 ---
 
 ## Data Sources
 
 | Source | What it provides |
 |--------|-----------------|
-| **FRED** (St. Louis Fed) | CPI, interest rates, GDP |
-| **BLS** (Bureau of Labor Statistics) | Unemployment by metro area |
-| **BEA** (Bureau of Economic Analysis) | Consumer spending by sector |
-| **Census** | Business density by NAICS + metro |
-| **NewsData.io** | Local news sentiment for the business category |
+| **FRED** (St. Louis Fed) | CPI (YoY rate), interest rates, GDP |
+| **BLS** (Bureau of Labor Statistics) | Unemployment rate and labor force by metro area |
+| **BEA** (Bureau of Economic Analysis) | Personal consumption expenditure by sector (quarterly) |
+| **Census CBP** | Business establishment counts by NAICS sector across all states |
+| **Census ACS** | Local demographics — population, median income, age, income distribution |
+| **NewsData.io** | Recent news for the business category, filtered by NAICS-keyed search terms |
 
 All API responses are cached to `backend/data/cache/` by date. Repeat runs on the same day reuse the cache.
 
@@ -184,13 +229,13 @@ All API responses are cached to `backend/data/cache/` by date. Repeat runs on th
 
 ## LLM / Agent Integration
 
-Three local Ollama (`qwen2.5:7b`) agent calls in the pipeline:
+Three local Ollama (`qwen2.5:7b`) agent calls run in sequence:
 
-1. **Data Agent** — resolves `business_type + city + state` → `naics_code + msa_code`; also handles news sentiment analysis
+1. **Data Agent** — resolves `business_type + city + state` → `naics_code + msa_code`; also scores news article sentiment and filters irrelevant articles
 2. **Enrichment Agent** — extracts structured simulation parameters from the optional plain-English description on step 3; only overrides keys explicitly mentioned
 3. **Simulation Agent** — writes a 2–3 sentence recommendation grounded in the actual OP delta numbers (revenue, margin, footfall, confidence score)
 
-All three calls degrade gracefully — if Ollama is unavailable, the pipeline continues without LLM output.
+All three calls degrade gracefully — if Ollama is unavailable, the pipeline continues with rule-based fallbacks.
 
 ---
 
@@ -215,7 +260,4 @@ All three calls degrade gracefully — if Ollama is unavailable, the pipeline co
 | Enrollment | `input_newbusiness_<date>.json` |
 | Market snapshot | `ms_exp_<bizid>_<date>.json` |
 | Simulation output | `op_<usecase>_<bizid>_<date>.json` |
-
----
-
-*Built at WEHack UTD · April 2026*
+| API cache | `<source>_<suffix>_<date>.json` |

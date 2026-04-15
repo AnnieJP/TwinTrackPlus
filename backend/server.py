@@ -29,6 +29,7 @@ INPUT_DIR = DATA_DIR / "base"
 # Import sim layer
 sys.path.insert(0, str(BACKEND / "sim"))
 from sim_bridge import twin_layer_to_ip1
+def _twin_to_ip1(twin): return twin_layer_to_ip1(twin)
 
 # Make backend/ importable so agents package resolves correctly
 sys.path.insert(0, str(BACKEND))
@@ -296,7 +297,7 @@ class Handler(BaseHTTPRequestHandler):
                 }).encode("utf-8"))
                 return
 
-            ip1 = twin_layer_to_ip1(twin)
+            ip1 = _twin_to_ip1(twin)
 
             try:
                 from agents.orchestrator import run_simulate_pipeline
@@ -329,10 +330,9 @@ class Handler(BaseHTTPRequestHandler):
 
             try:
                 from ml.main import build_market_snapshot
-                from sim.sim_bridge import twin_layer_to_ip1
                 from agents.scenario_agent import suggest_scenarios
 
-                ip1          = twin_layer_to_ip1(twin)
+                ip1          = _twin_to_ip1(twin)
                 ms           = build_market_snapshot(twin)
                 business_name = str((twin.get("meta") or {}).get("business_name") or "Business")
                 scenarios    = suggest_scenarios(ip1, ms, business_name)
@@ -359,7 +359,7 @@ class Handler(BaseHTTPRequestHandler):
             meta["type"] = "base"
             twin["meta"] = meta
             
-            ip1 = twin_layer_to_ip1(twin)
+            ip1 = _twin_to_ip1(twin)
             result = {
                 "twin_layer": twin,
                 "sim": None,
@@ -440,7 +440,7 @@ class Handler(BaseHTTPRequestHandler):
             twin["meta"]         = meta
 
             # Recompute IP1 with updated financials
-            ip1 = twin_layer_to_ip1(twin)
+            ip1 = _twin_to_ip1(twin)
             result = {"twin_layer": twin, "sim": None, "ip1": ip1, "ip2": None, "output": None}
 
             # Write versioned file: input_newbusiness_<id>_v<N>_<date>.json
