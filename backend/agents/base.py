@@ -1,19 +1,23 @@
 """
-Shared Ollama client and agentic tool-use loop for TwinTrack agents.
+Shared Anthropic client and agentic tool-use loop for TwinTrack agents.
 
-All agents point to a local Ollama instance at http://localhost:11434/v1
-using the OpenAI-compatible API — no cloud costs, no API keys.
+All agents call Anthropic Claude Haiku via the OpenAI-compatible endpoint
+(https://api.anthropic.com/v1) using the openai SDK — requires ANTHROPIC_API_KEY in .env.
 """
 import json
+import os
 import time
 from openai import OpenAI
 from openai import APIConnectionError, APITimeoutError
+from dotenv import load_dotenv
 
-OLLAMA_BASE_URL = "http://localhost:11434/v1"
-MODEL           = "qwen2.5:7b"
-REQUEST_TIMEOUT = 45.0   # seconds per Ollama call before giving up
-MAX_RETRIES     = 2      # retry attempts after first failure (3 total)
-RETRY_DELAY     = 2.0    # seconds between retries
+load_dotenv()
+
+ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1"
+MODEL              = "claude-haiku-4-5-20251001"
+REQUEST_TIMEOUT    = 30.0   # seconds per API call before giving up
+MAX_RETRIES        = 2      # retry attempts after first failure (3 total)
+RETRY_DELAY        = 2.0    # seconds between retries
 
 _client = None
 
@@ -22,8 +26,8 @@ def get_client() -> OpenAI:
     global _client
     if _client is None:
         _client = OpenAI(
-            base_url=OLLAMA_BASE_URL,
-            api_key="ollama",
+            base_url=ANTHROPIC_BASE_URL,
+            api_key=os.getenv("ANTHROPIC_API_KEY", ""),
             timeout=REQUEST_TIMEOUT,
         )
     return _client
@@ -43,7 +47,7 @@ def _call_with_retry(client: OpenAI, kwargs: dict, max_retries: int = MAX_RETRIE
         except (APIConnectionError, APITimeoutError) as e:
             last_exc = e
             if attempt < max_retries:
-                print(f"[base] Ollama call failed ({type(e).__name__}: {e}) "
+                print(f"[base] Anthropic call failed ({type(e).__name__}: {e}) "
                       f"— retry {attempt + 1}/{max_retries} in {RETRY_DELAY}s")
                 time.sleep(RETRY_DELAY)
             else:

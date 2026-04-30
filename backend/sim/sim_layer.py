@@ -641,6 +641,88 @@ def _build_explanations(ip1: dict, ip2: dict, ms: dict,
     return {}
 
 
+# ── Credit Risk Signal ───────────────────────────────────────────────────────
+
+def _compute_credit_risk_signal(fin_op1: dict, fin_op2: dict, delta: dict,
+                                confidence: float, use_case: str) -> dict:
+    """
+    Derives a lender-perspective credit risk signal from simulation outputs.
+
+    Three buckets:
+        creditworthy   — profit improving, confidence >= 65%, margin >= 15%,
+                         break-even <= 24 months (franchising only)
+        elevated_risk  — mixed signals: profit up but thin margin, OR
+                         confidence 45-65%, OR break-even 24-48 months
+        high_risk      — profit declining, OR confidence < 45%,
+                         OR break-even > 48 months, OR margin < 10%
+
+    Returns:
+        {
+            "signal":  "creditworthy" | "elevated_risk" | "high_risk",
+            "label":   "Creditworthy" | "Elevated Risk" | "High Risk",
+            "reasons": [str, ...]   # up to 3 reasons that drove the signal
+        }
+    """
+    profit_delta  = delta.get("profit_delta", 0)
+    margin_op2    = fin_op2.get("margin", 0)
+    break_even_mo = fin_op2.get("break_even_months")   # franchising only
+
+    reasons: list[str] = []
+    risk_points = 0
+
+    # Profit direction
+    if profit_delta < 0:
+        risk_points += 3
+        reasons.append(f"Profit declining by ${abs(profit_delta):,.0f}/mo")
+    elif profit_delta > 0:
+        reasons.append(f"Profit improving by ${profit_delta:,.0f}/mo")
+
+    # Confidence
+    if confidence < 0.45:
+        risk_points += 2
+        reasons.append(f"Model confidence critically low ({confidence*100:.0f}%)")
+    elif confidence < 0.65:
+        risk_points += 1
+        reasons.append(f"Confidence below 65% threshold ({confidence*100:.0f}%)")
+    else:
+        reasons.append(f"Confidence adequate ({confidence*100:.0f}%)")
+
+    # Margin health post-decision
+    if margin_op2 < 0.10:
+        risk_points += 2
+        reasons.append(f"Post-decision margin critically thin ({margin_op2*100:.1f}%)")
+    elif margin_op2 < 0.15:
+        risk_points += 1
+        reasons.append(f"Post-decision margin below 15% ({margin_op2*100:.1f}%)")
+
+    # Break-even (franchising only)
+    if use_case == "franchising" and break_even_mo is not None:
+        if break_even_mo > 48:
+            risk_points += 2
+            reasons.append(f"Break-even {break_even_mo:.0f} months — above 48-month limit")
+        elif break_even_mo > 24:
+            risk_points += 1
+            reasons.append(f"Break-even {break_even_mo:.0f} months — above 24-month preferred")
+        else:
+            reasons.append(f"Break-even {break_even_mo:.0f} months — within range")
+
+    if risk_points >= 3:
+        signal = "high_risk"
+        label  = "High Risk"
+    elif risk_points >= 1:
+        signal = "elevated_risk"
+        label  = "Elevated Risk"
+    else:
+        signal = "creditworthy"
+        label  = "Creditworthy"
+
+    return {
+        "signal":  signal,
+        "label":   label,
+        "reasons": reasons[:3],
+    }
+
+
 # ── Dispatch Table ────────────────────────────────────────────────────────────
 
 _FORMULA: dict[str, Any] = {
@@ -692,6 +774,8 @@ def run_simulation(ms: dict, ip1: dict, ip2: dict) -> dict:
         "margin_delta":  round(fin_op2["margin"]  - fin_op1["margin"],  4),
     }
 
+    credit_risk = _compute_credit_risk_signal(fin_op1, fin_op2, delta, confidence, use_case)
+
     risk_block = {
         "confidence_score": confidence,
         "sentiment_score":  sentiment,
@@ -711,6 +795,7 @@ def run_simulation(ms: dict, ip1: dict, ip2: dict) -> dict:
             "risk":         risk_block,
             "delta":        delta,
             "explanations": explanations,
+            "credit_risk":  credit_risk,
         },
     }
 
