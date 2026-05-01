@@ -63,6 +63,7 @@ class SimState:
     recommendation:     str | None       = None
     use_case:           str              = ""
     proposed_scenarios: list[dict] | None = None   # set by Scenario Agent pre-pipeline
+    asp_verdict:        dict | None      = None    # set by ASP decision engine
 
     # ── Agent audit log ───────────────────────────────────────────────────────
     agent_log: list[AgentContribution] = field(default_factory=list)
@@ -129,6 +130,7 @@ class SimState:
             "op2":            self.op2,
             "recommendation": self.recommendation,
             "use_case":       self.use_case,
+            "asp_verdict":    self.asp_verdict,
             "agent_log": [
                 {
                     "agent":       c.agent,

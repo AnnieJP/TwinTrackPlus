@@ -25,6 +25,7 @@ BACKEND = Path(__file__).resolve().parent
 REPO_ROOT = BACKEND.parent
 DATA_DIR = BACKEND / "data"
 INPUT_DIR = DATA_DIR / "base"
+SIM_DIR   = DATA_DIR / "simulations"
 
 # Import sim layer
 sys.path.insert(0, str(BACKEND / "sim"))
@@ -215,6 +216,58 @@ def list_enrollments(limit: int = 100) -> list[dict]:
 
 
 
+def save_simulation_record(result: dict, business_name: str, experiment_label: str | None, sim_params: dict) -> None:
+    """Persist a simulation result to data/simulations/ for the history view."""
+    SIM_DIR.mkdir(parents=True, exist_ok=True)
+    from datetime import datetime
+    ts = datetime.now().strftime("%Y%m%dT%H%M%S")
+    business_id = str((result.get("op1") or {}).get("financials", {}).get("business_id") or
+                      sim_params.get("business_id") or "unknown")
+    use_case    = str(result.get("use_case") or sim_params.get("useCase") or "")
+    rec = result.get("recommendation") or ""
+    verdict     = "PROCEED WITH CAUTION"
+    if rec.startswith("DO NOT PROCEED"):      verdict = "DO NOT PROCEED"
+    elif rec.startswith("PROCEED WITH CAUTION"): verdict = "PROCEED WITH CAUTION"
+    elif rec.startswith("PROCEED"):            verdict = "PROCEED"
+    record = {
+        "business_id":       business_id,
+        "business_name":     business_name,
+        "experiment_label":  experiment_label or use_case.replace("_", " ").title(),
+        "use_case":          use_case,
+        "timestamp":         datetime.now().isoformat(timespec="seconds"),
+        "verdict":           verdict,
+        "asp_signal":        (result.get("asp_verdict") or {}).get("signal"),
+        "result":            result,
+    }
+    fname = f"sim_{business_id}_{ts}.json"
+    (SIM_DIR / fname).write_text(json.dumps(record, indent=2), encoding="utf-8")
+
+
+def list_simulation_records(limit: int = 50) -> list[dict]:
+    """Return simulation summaries sorted newest-first for the history view."""
+    if not SIM_DIR.is_dir():
+        return []
+    recs: list[tuple[float, dict]] = []
+    for p in SIM_DIR.glob("sim_*.json"):
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            recs.append((p.stat().st_mtime, {
+                "id":               p.stem,
+                "business_id":      data.get("business_id"),
+                "business_name":    data.get("business_name"),
+                "experiment_label": data.get("experiment_label"),
+                "use_case":         data.get("use_case"),
+                "timestamp":        data.get("timestamp"),
+                "verdict":          data.get("verdict"),
+                "asp_signal":       data.get("asp_signal"),
+                "result":           data.get("result"),
+            }))
+        except Exception:
+            pass
+    recs.sort(key=lambda x: x[0], reverse=True)
+    return [r for _, r in recs[:limit]]
+
+
 def write_enrollment_json(twin: dict, result: dict) -> str:
     """New file under backend/output/input/ each call; returns repo-relative path."""
     INPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -252,6 +305,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/enrollments":
             self._headers(200)
             self.wfile.write(json.dumps({"ok": True, "items": list_enrollments()}).encode("utf-8"))
+            return
+        if path == "/api/simulations":
+            self._headers(200)
+            self.wfile.write(json.dumps({"ok": True, "items": list_simulation_records()}).encode("utf-8"))
             return
         self._headers(404)
         self.wfile.write(json.dumps({"error": "not found"}).encode("utf-8"))
@@ -302,6 +359,12 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 from agents.orchestrator import run_simulate_pipeline
                 result = run_simulate_pipeline(twin, ip1, sim_params, nl_description)
+                business_name  = str((twin.get("meta") or {}).get("business_name") or "Business")
+                experiment_label = str(sim_params.get("experimentLabel") or "").strip() or None
+                try:
+                    save_simulation_record(result, business_name, experiment_label, sim_params)
+                except Exception as _se:
+                    print(f"[server] Warning: could not save simulation record: {_se}")
                 self._headers(200)
                 self.wfile.write(json.dumps({"ok": True, "result": result}).encode("utf-8"))
             except Exception as e:

@@ -17,19 +17,21 @@ Context/sentiment/forecast/elasticity work happens inside the ML layer
 import sys
 import os
 
-_BACKEND = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_SIM_DIR  = os.path.join(_BACKEND, "sim")
-_ML_DIR   = os.path.join(_BACKEND, "ml")
-for _p in [_BACKEND, _SIM_DIR, _ML_DIR]:
+_BACKEND      = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_SIM_DIR      = os.path.join(_BACKEND, "sim")
+_ML_DIR       = os.path.join(_BACKEND, "ml")
+_REASONING_DIR = os.path.join(_BACKEND, "reasoning")
+for _p in [_BACKEND, _SIM_DIR, _ML_DIR, _REASONING_DIR]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from agents.sim_state      import SimState
+from agents.sim_state         import SimState
 from agents.enrichment_agent  import extract_nl_parameters
 from agents.critique_agent    import critique_simulation
 from agents.simulation_agent  import generate_recommendation
-from main        import build_market_snapshot
-from sim_bridge  import ui_sim_to_ip2
+from reasoning.planner        import derive_verdict
+from main                     import build_market_snapshot
+from sim_bridge               import ui_sim_to_ip2
 
 
 def run_pipeline(
@@ -138,17 +140,33 @@ def run_pipeline(
         },
     )
 
-    # ── Step 4: Simulation Agent ─────────────────────────────────────────────
+    # ── Step 4: ASP Decision Engine ────────────────────────────────────
+    print("[orchestrator] → ASP Decision Engine: deriving verdict from rules...")
+    confidence = state.op2.get("risk", {}).get("confidence_score", 0.5)
+    asp_verdict = derive_verdict(state.op1, state.op2, confidence, state.use_case)
+    state.asp_verdict = asp_verdict
+    state.log(
+        agent="decision_engine",
+        action="verdict_derived",
+        notes=f"ASP verdict: {asp_verdict['verdict']}",
+        adjustments={
+            "signal":  asp_verdict["signal"],
+            "reasons": asp_verdict["reasons"],
+        },
+    )
+
+    # ── Step 5: Simulation Agent (prose only) ─────────────────────────────
     business_name = str((twin.get("meta") or {}).get("business_name") or "Business")
-    print("[orchestrator] → Simulation Agent: generating recommendation...")
+    print("[orchestrator] → Simulation Agent: generating explanatory prose...")
     recommendation = generate_recommendation(
-        state.op1, state.op2, state.ip2.get("use_case", ""), business_name
+        state.op1, state.op2, state.ip2.get("use_case", ""), business_name,
+        asp_verdict=asp_verdict,
     )
     state.recommendation = recommendation
     state.log(
         agent="simulation_agent",
-        action="recommended",
-        notes=f"Recommendation generated ({len(recommendation or '')} chars)",
+        action="prose_generated",
+        notes=f"Prose generated for verdict '{asp_verdict['verdict']}' ({len(recommendation or '')} chars)",
     )
 
     print("[orchestrator] ── Pipeline complete ────────────────────────────────")

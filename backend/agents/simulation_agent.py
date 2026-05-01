@@ -86,23 +86,27 @@ def resolve_demographic(description: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Recommendation generation (no tools — pure LLM reasoning over numbers)
+# Recommendation generation — verdict fixed by ASP, LLM writes prose only
 # ---------------------------------------------------------------------------
-_REC_SYSTEM = """You are a financial advisor giving concise, specific recommendations to small business owners.
-Be direct and cite the numbers. Begin your response with one of these three verdicts — choose based on the data:
-
-  PROCEED       — revenue and profit both improve, margin holds or improves, confidence ≥ 65%
-  PROCEED WITH CAUTION — mixed signals: revenue up but margin declines, OR low confidence (< 65%), OR sentiment negative
-  DO NOT PROCEED — profit declines, margin drops significantly (> 5pp), or break-even > 60 months
-
-Do not default to "proceed with caution" out of habit — use the thresholds above.
-After the verdict, name the single most important risk in 1-2 sentences."""
+_REC_SYSTEM_PROSE = """You are a financial advisor writing a concise explanation for a small business owner.
+The decision verdict has already been determined by a formal rules engine.
+Your only job: write 2 sentences that explain WHY this verdict was reached, citing the key numbers.
+Do NOT re-state or change the verdict. Do NOT add caveats beyond what the data shows."""
 
 
-def generate_recommendation(op1: dict, op2: dict, use_case: str, business_name: str) -> str | None:
+def generate_recommendation(
+    op1: dict,
+    op2: dict,
+    use_case: str,
+    business_name: str,
+    asp_verdict: dict | None = None,
+) -> str | None:
     """
     Simulation Agent entry point for recommendation generation.
-    Returns 2-3 sentence plain-English verdict grounded in OP1 → OP2 deltas.
+
+    When asp_verdict is provided (normal path), the verdict string is fixed by
+    the ASP decision engine — the LLM only writes the explanatory prose.
+    When asp_verdict is absent (fallback), the LLM determines both verdict and prose.
     """
     f1    = op1.get("financials", {})
     f2    = op2.get("financials", {})
@@ -111,27 +115,47 @@ def generate_recommendation(op1: dict, op2: dict, use_case: str, business_name: 
 
     print(f"[simulation_agent] Generating recommendation for '{business_name}'...")
 
-    result = run_agent(
-        system_prompt=_REC_SYSTEM,
-        user_message=(
-            f"Business: {business_name}\n"
-            f"Decision type: {use_case.replace('_', ' ')}\n\n"
-            "Simulation results:\n"
-            f"  Revenue:      ${f1.get('revenue', 0):,.0f} → ${f2.get('revenue', 0):,.0f}"
-            f"  ({delta.get('revenue_delta', 0):+,.0f}/mo)\n"
-            f"  Profit:       ${f1.get('profit', 0):,.0f} → ${f2.get('profit', 0):,.0f}"
-            f"  ({delta.get('profit_delta', 0):+,.0f}/mo)\n"
-            f"  Margin:       {f1.get('margin', 0)*100:.1f}% → {f2.get('margin', 0)*100:.1f}%\n"
-            f"  Foot traffic: {f1.get('footfall', 0):,.0f} → {f2.get('footfall', 0):,.0f} visits/mo\n"
-            f"  Confidence:   {risk.get('confidence_score', 0)*100:.0f}%\n"
-            f"  Sentiment:    {risk.get('sentiment_score', 0):.2f}\n\n"
-            "Write 2-3 sentences. Start with PROCEED, PROCEED WITH CAUTION, or DO NOT PROCEED "
-            "based on whether the numbers justify it — do not hedge if the data is clearly positive or clearly negative. "
-            "Cite the key numbers, then name the single most important risk."
-        ),
-    )
+    if asp_verdict:
+        verdict_label = asp_verdict["verdict"]   # PROCEED / PROCEED WITH CAUTION / DO NOT PROCEED
+        reasons_text  = "; ".join(asp_verdict.get("reasons", [])[:3])
+        result = run_agent(
+            system_prompt=_REC_SYSTEM_PROSE,
+            user_message=(
+                f"Business: {business_name}\n"
+                f"Decision type: {use_case.replace('_', ' ')}\n"
+                f"Verdict (already fixed): {verdict_label}\n"
+                f"Key reasons: {reasons_text}\n\n"
+                "Simulation numbers:\n"
+                f"  Revenue:    ${f1.get('revenue', 0):,.0f} → ${f2.get('revenue', 0):,.0f}"
+                f" ({delta.get('revenue_delta', 0):+,.0f}/mo)\n"
+                f"  Profit:     ${f1.get('profit', 0):,.0f} → ${f2.get('profit', 0):,.0f}"
+                f" ({delta.get('profit_delta', 0):+,.0f}/mo)\n"
+                f"  Margin:     {f1.get('margin', 0)*100:.1f}% → {f2.get('margin', 0)*100:.1f}%\n"
+                f"  Confidence: {risk.get('confidence_score', 0)*100:.0f}%\n\n"
+                "Write exactly 2 sentences of prose. Do not repeat the verdict label."
+            ),
+        )
+        prose = (result or "").strip()
+        text  = f"{verdict_label} — {prose}" if prose else verdict_label
+    else:
+        result = run_agent(
+            system_prompt=(
+                "You are a financial advisor. Begin with PROCEED, PROCEED WITH CAUTION, "
+                "or DO NOT PROCEED based on the data, then explain in 2 sentences."
+            ),
+            user_message=(
+                f"Business: {business_name}\n"
+                f"Decision type: {use_case.replace('_', ' ')}\n\n"
+                f"  Revenue:    ${f1.get('revenue', 0):,.0f} → ${f2.get('revenue', 0):,.0f}"
+                f" ({delta.get('revenue_delta', 0):+,.0f}/mo)\n"
+                f"  Profit:     ${f1.get('profit', 0):,.0f} → ${f2.get('profit', 0):,.0f}"
+                f" ({delta.get('profit_delta', 0):+,.0f}/mo)\n"
+                f"  Margin:     {f1.get('margin', 0)*100:.1f}% → {f2.get('margin', 0)*100:.1f}%\n"
+                f"  Confidence: {risk.get('confidence_score', 0)*100:.0f}%"
+            ),
+        )
+        text = (result or "").strip()
 
-    text = (result or "").strip()
     if text:
         print(f"[simulation_agent] Recommendation generated ({len(text)} chars)")
     return text or None
