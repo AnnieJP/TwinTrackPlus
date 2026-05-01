@@ -1,536 +1,468 @@
 #!/usr/bin/env python3
 """
-TwinTrack enrollment API (stdlib only).
+Folio — Portfolio Management API  (stdlib + yfinance)
 
-Run from repository root:
-    python backend/server.py
+Run:  python backend/server.py
 
-POST /api/save-twin-layer
-  Body: { "twin_layer": { ... } }  — requires meta.business_id, meta.business_name
-  Writes: backend/data/base/input_newbusiness_<date>.json
-          (new file each submit; _2, _3 if same name exists)
+Endpoints
+─────────
+GET  /api/portfolio              load portfolio
+POST /api/portfolio              full-replace save
+POST /api/portfolio/add          add one holding
+POST /api/portfolio/update       update one holding (by id)
+POST /api/portfolio/remove       remove one holding {id}
+GET  /api/scenarios              list scenario metadata
+POST /api/prices                 {symbols:[...]}  → {prices:{sym:price}}
+POST /api/risk                   {portfolio, prices}  → risk analysis
+POST /api/rebalance              {portfolio, prices}  → rebalancing plan
+POST /api/scenario               {portfolio, prices, scenario_id}  → sim
 """
 
 from __future__ import annotations
 
 import json
-import re
-import sys
-from datetime import date
+import os
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse
 
-BACKEND = Path(__file__).resolve().parent
-REPO_ROOT = BACKEND.parent
-DATA_DIR = BACKEND / "data"
-INPUT_DIR = DATA_DIR / "base"
-SIM_DIR   = DATA_DIR / "simulations"
-
-# Import sim layer
-sys.path.insert(0, str(BACKEND / "sim"))
-from sim_bridge import twin_layer_to_ip1
-def _twin_to_ip1(twin): return twin_layer_to_ip1(twin)
-
-# Make backend/ importable so agents package resolves correctly
-sys.path.insert(0, str(BACKEND))
-
-import os
 from dotenv import load_dotenv
 load_dotenv()
 
+BACKEND       = Path(__file__).resolve().parent
+DATA_DIR      = BACKEND / "data"
+PORTFOLIO_FILE = DATA_DIR / "portfolio.json"
 
+# ── Default demo portfolio ────────────────────────────────────────────────────
+DEFAULT_PORTFOLIO = {
+    "name": "My Portfolio",
+    "risk_profile": "moderate",
+    "holdings": [
+        {"id": "h1", "symbol": "AAPL",  "name": "Apple Inc.",                        "type": "stock", "shares": 10, "avg_cost": 178.50, "target_pct": 15},
+        {"id": "h2", "symbol": "MSFT",  "name": "Microsoft Corp.",                   "type": "stock", "shares": 5,  "avg_cost": 380.00, "target_pct": 12},
+        {"id": "h3", "symbol": "VOO",   "name": "Vanguard S&P 500 ETF",              "type": "etf",   "shares": 8,  "avg_cost": 420.00, "target_pct": 25},
+        {"id": "h4", "symbol": "BND",   "name": "Vanguard Total Bond Market ETF",    "type": "bond",  "shares": 30, "avg_cost": 72.50,  "target_pct": 20},
+        {"id": "h5", "symbol": "GOOGL", "name": "Alphabet Inc.",                     "type": "stock", "shares": 3,  "avg_cost": 170.00, "target_pct": 10},
+        {"id": "h6", "symbol": "VTI",   "name": "Vanguard Total Stock Market ETF",   "type": "etf",   "shares": 6,  "avg_cost": 235.00, "target_pct": 13},
+    ],
+    "cash": 3500,
+    "target_cash_pct": 5,
+}
+
+# ── Market scenarios ──────────────────────────────────────────────────────────
+SCENARIOS = {
+    "market_crash": {
+        "name": "Market Crash",  "icon": "📉",
+        "description": "A sudden sharp drop across all markets — like 2008 or early 2020.",
+        "shocks": {"stock": -0.22, "etf": -0.18, "bond": 0.04, "fund": -0.18, "cash": 0},
+    },
+    "recession": {
+        "name": "Prolonged Recession",  "icon": "🌧️",
+        "description": "A slow economic contraction lasting 12–18 months.",
+        "shocks": {"stock": -0.38, "etf": -0.32, "bond": 0.08, "fund": -0.30, "cash": 0},
+    },
+    "tech_selloff": {
+        "name": "Tech Selloff",  "icon": "💻",
+        "description": "Technology stocks fall sharply while other sectors hold steady.",
+        "shocks": {"stock": -0.12, "etf": -0.08, "bond": 0.02, "fund": -0.09, "cash": 0},
+        "tech_shock": -0.32,
+        "tech_symbols": ["AAPL", "MSFT", "GOOGL", "META", "AMZN", "NVDA", "TSLA", "QQQ"],
+    },
+    "rate_hike": {
+        "name": "Interest Rate Hike",  "icon": "🏦",
+        "description": "Central bank raises rates sharply — hurts bonds and growth stocks.",
+        "shocks": {"stock": -0.08, "etf": -0.06, "bond": -0.12, "fund": -0.07, "cash": 0.01},
+    },
+    "bull_market": {
+        "name": "Bull Market Boom",  "icon": "🚀",
+        "description": "Strong growth and optimism push markets to new highs.",
+        "shocks": {"stock": 0.28, "etf": 0.24, "bond": -0.03, "fund": 0.22, "cash": 0},
+    },
+}
+
+# ── Risk helpers ──────────────────────────────────────────────────────────────
+TYPE_BETA = {"stock": 1.1, "etf": 0.9, "bond": 0.2, "fund": 0.85, "cash": 0}
+
+def beta_to_risk(beta: float):
+    if beta < 0.5:  return (2,   "Low",           "Safe & Steady",     "🛡️")
+    if beta < 0.8:  return (3.5, "Low-Moderate",  "Cautious",          "🌿")
+    if beta < 1.1:  return (5,   "Moderate",      "Balanced",          "⚖️")
+    if beta < 1.4:  return (7,   "Moderate-High", "Growth-Oriented",   "📈")
+    return               (9,   "High",          "Aggressive",        "⚡")
+
+PLAIN_ENGLISH = {
+    "Low":          "Your portfolio prioritises safety over growth. You're unlikely to see big gains, but you also won't lose sleep over market swings.",
+    "Low-Moderate": "Your portfolio leans cautious. Expect modest growth in good times and smaller losses when markets dip.",
+    "Moderate":     "Your portfolio strikes a healthy balance between growth and protection. It should hold up reasonably well in most market conditions.",
+    "Moderate-High":"Your portfolio leans toward growth. Expect bigger gains in bull markets — but bumpier rides when markets fall.",
+    "High":         "Your portfolio is built for maximum growth. Be prepared for large swings — both up and down.",
+}
+
+# ── Portfolio I/O ─────────────────────────────────────────────────────────────
+def load_portfolio() -> dict:
+    if PORTFOLIO_FILE.exists():
+        try:
+            return json.loads(PORTFOLIO_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    PORTFOLIO_FILE.write_text(json.dumps(DEFAULT_PORTFOLIO, indent=2), encoding="utf-8")
+    return dict(DEFAULT_PORTFOLIO)
+
+def save_portfolio(data: dict) -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    PORTFOLIO_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+# ── Live price fetching ───────────────────────────────────────────────────────
+_MOCK_PRICES = {
+    "AAPL": 192.3,  "MSFT": 415.0,  "GOOGL": 175.5, "META":  580.0,
+    "AMZN": 210.0,  "NVDA": 875.0,  "TSLA":  250.0,  "VOO":   505.0,
+    "VTI":  268.0,  "BND":   73.5,  "QQQ":   460.0,  "SPY":   560.0,
+    "GLD":  235.0,  "IVV":   570.0, "SCHD":  28.0,   "AGG":   96.5,
+}
+
+def _get_one_price(sym: str) -> tuple[str, float]:
+    try:
+        import yfinance as yf
+        info = yf.Ticker(sym).info
+        price = (info.get("currentPrice") or info.get("regularMarketPrice")
+                 or info.get("navPrice") or info.get("previousClose") or 0)
+        return sym, round(float(price), 2)
+    except Exception:
+        return sym, _MOCK_PRICES.get(sym, 100.0)
+
+def fetch_prices(symbols: list[str]) -> dict[str, float]:
+    if not symbols:
+        return {}
+    prices: dict[str, float] = {}
+    with ThreadPoolExecutor(max_workers=min(len(symbols), 10)) as ex:
+        for sym, price in ex.map(_get_one_price, symbols):
+            prices[sym] = price
+    return prices
+
+# ── Risk calculation ──────────────────────────────────────────────────────────
+def calc_risk(portfolio: dict, prices: dict) -> dict:
+    holdings = portfolio.get("holdings", [])
+    cash     = float(portfolio.get("cash", 0))
+
+    valued = []
+    total  = cash
+    for h in holdings:
+        price = prices.get(h["symbol"]) or h.get("avg_cost", 0)
+        val   = h["shares"] * price
+        total += val
+        valued.append({**h, "current_price": price, "current_value": val})
+    if total == 0:
+        total = 1
+
+    # Fetch betas (parallel, fall back to type defaults)
+    betas: dict[str, float] = {}
+    def _get_beta(sym_type: tuple[str, str]) -> tuple[str, float]:
+        sym, typ = sym_type
+        try:
+            import yfinance as yf
+            b = yf.Ticker(sym).info.get("beta")
+            return sym, float(b) if b else TYPE_BETA.get(typ, 1.0)
+        except Exception:
+            return sym, TYPE_BETA.get(typ, 1.0)
+
+    with ThreadPoolExecutor(max_workers=min(len(valued), 10)) as ex:
+        for sym, beta in ex.map(_get_beta, [(h["symbol"], h["type"]) for h in valued]):
+            betas[sym] = beta
+
+    port_beta   = 0.0
+    holdings_risk = []
+    for h in valued:
+        w    = h["current_value"] / total
+        beta = betas.get(h["symbol"], 1.0)
+        port_beta += w * beta
+        contrib = ("Adds stability" if beta < 0.4 else
+                   "Low risk"       if beta < 0.8 else
+                   "Average risk"   if beta < 1.2 else
+                   "Adds some risk" if beta < 1.5 else "High risk contributor")
+        holdings_risk.append({
+            "symbol":     h["symbol"],
+            "name":       h.get("name", h["symbol"]),
+            "beta":       round(beta, 2),
+            "weight_pct": round(w * 100, 1),
+            "contribution": contrib,
+            "type":       h["type"],
+        })
+
+    score, level, label, icon = beta_to_risk(port_beta)
+
+    warnings = []
+    for h in valued:
+        pct = h["current_value"] / total * 100
+        if pct > 30:
+            warnings.append(f"{h['symbol']} is {pct:.0f}% of your portfolio — very concentrated. Consider spreading the risk.")
+        elif pct > 22:
+            warnings.append(f"{h['symbol']} is {pct:.0f}% of your portfolio — a bit heavy. A little diversification could help.")
+
+    types = {h["type"] for h in holdings}
+    div_score = min(10, len(types) * 2 + min(len(holdings), 5))
+
+    return {
+        "portfolio_beta":        round(port_beta, 2),
+        "risk_score":            score,
+        "risk_level":            level,
+        "risk_label":            label,
+        "risk_icon":             icon,
+        "plain_english":         PLAIN_ENGLISH.get(level, ""),
+        "concentration_warnings": warnings,
+        "diversification_score": div_score,
+        "holdings_risk":         sorted(holdings_risk, key=lambda x: -x["weight_pct"]),
+        "total_value":           round(total, 2),
+    }
+
+# ── Rebalancing ───────────────────────────────────────────────────────────────
+def calc_rebalance(portfolio: dict, prices: dict) -> dict:
+    holdings = portfolio.get("holdings", [])
+    cash     = float(portfolio.get("cash", 0))
+
+    total  = cash
+    valued = []
+    for h in holdings:
+        price = prices.get(h["symbol"]) or h.get("avg_cost", 0)
+        val   = h["shares"] * price
+        total += val
+        valued.append({**h, "current_price": price, "current_value": val})
+    if total == 0:
+        total = 1
+
+    THRESHOLD = 3.0
+    suggestions = []
+    snapshot    = []
+
+    for h in valued:
+        cur_pct  = h["current_value"] / total * 100
+        tgt_pct  = float(h.get("target_pct") or 0)
+        drift    = cur_pct - tgt_pct
+
+        snapshot.append({
+            "symbol":        h["symbol"],
+            "name":          h.get("name", h["symbol"]),
+            "type":          h["type"],
+            "current_pct":   round(cur_pct, 1),
+            "target_pct":    tgt_pct,
+            "drift":         round(drift, 1),
+            "current_value": round(h["current_value"], 2),
+        })
+
+        if abs(drift) < THRESHOLD:
+            continue
+
+        excess_val = abs(drift / 100) * total
+        shares_n   = max(1, int(excess_val / max(h["current_price"], 0.01)))
+        action     = "sell" if drift > 0 else "buy"
+
+        suggestions.append({
+            "symbol":        h["symbol"],
+            "name":          h.get("name", h["symbol"]),
+            "action":        action,
+            "shares":        shares_n,
+            "current_pct":   round(cur_pct, 1),
+            "target_pct":    tgt_pct,
+            "drift":         round(drift, 1),
+            "trade_value":   round(excess_val, 2),
+            "current_price": round(h["current_price"], 2),
+            "reason":        (f"{h['symbol']} has grown to {cur_pct:.1f}% — above your {tgt_pct}% goal"
+                              if drift > 0 else
+                              f"{h['symbol']} has shrunk to {cur_pct:.1f}% — below your {tgt_pct}% goal"),
+            "plain_action":  (f"Sell {shares_n} share{'s' if shares_n != 1 else ''} to trim it back"
+                              if drift > 0 else
+                              f"Buy {shares_n} share{'s' if shares_n != 1 else ''} to top it up"),
+        })
+
+    suggestions.sort(key=lambda x: -abs(x["drift"]))
+    return {
+        "needs_rebalancing": len(suggestions) > 0,
+        "suggestion_count":  len(suggestions),
+        "total_drift":       round(sum(abs(s["drift"]) for s in suggestions), 1),
+        "suggestions":       suggestions,
+        "allocation_snapshot": snapshot,
+        "total_value":       round(total, 2),
+    }
+
+# ── Scenario simulation ───────────────────────────────────────────────────────
+def calc_scenario(portfolio: dict, prices: dict, scenario_id: str) -> dict:
+    sc = SCENARIOS.get(scenario_id)
+    if sc is None:
+        return {"error": f"Unknown scenario: {scenario_id}"}
+
+    holdings     = portfolio.get("holdings", [])
+    cash         = float(portfolio.get("cash", 0))
+    cash_shock   = sc["shocks"].get("cash", 0)
+    total_orig   = cash
+    total_sim    = cash * (1 + cash_shock)
+    tech_symbols = sc.get("tech_symbols", [])
+    tech_shock   = sc.get("tech_shock")
+    impacts      = []
+
+    for h in holdings:
+        price      = prices.get(h["symbol"]) or h.get("avg_cost", 0)
+        orig_val   = h["shares"] * price
+        shock      = (tech_shock if tech_shock is not None and h["symbol"] in tech_symbols
+                      else sc["shocks"].get(h["type"], sc["shocks"].get("stock", 0)))
+        sim_val    = orig_val * (1 + shock)
+        total_orig += orig_val
+        total_sim  += sim_val
+        impacts.append({
+            "symbol":          h["symbol"],
+            "name":            h.get("name", h["symbol"]),
+            "type":            h["type"],
+            "original_value":  round(orig_val, 2),
+            "simulated_value": round(sim_val, 2),
+            "change":          round(sim_val - orig_val, 2),
+            "change_pct":      round(shock * 100, 1),
+        })
+
+    delta     = total_sim - total_orig
+    delta_pct = delta / total_orig * 100 if total_orig else 0
+
+    bond_pct = sum(
+        h["current_value"] / total_orig * 100
+        for h in [{"current_value": impacts[i]["original_value"], **holdings[i]}
+                  for i in range(len(holdings))]
+        if holdings[i].get("type") == "bond"
+    ) if total_orig else 0
+
+    advice_map = {
+        "market_crash": (
+            "Your bond holdings are cushioning the blow — that's exactly what they're for."
+            if bond_pct >= 25 else
+            "Adding more bonds (target ~25%) would make your portfolio more resilient to sudden crashes."
+        ),
+        "recession": "Recessions are slow and prolonged. Bonds, dividend-paying stocks, and broad market ETFs tend to hold up best.",
+        "tech_selloff": "Your exposure to tech stocks drives this loss. Diversifying into healthcare, consumer goods, or bonds would reduce this risk.",
+        "rate_hike": (
+            "Rate hikes hurt long-term bonds most. Consider shifting some bond holdings to shorter-duration funds."
+            if bond_pct >= 20 else
+            "Rate hikes have mixed effects. Financials often benefit; growth stocks and long bonds can suffer."
+        ),
+        "bull_market": f"Great news — your portfolio grows {abs(delta_pct):.1f}% in this scenario. Stick to your target allocation to lock in gains as markets rise.",
+    }
+
+    return {
+        "scenario_id":          scenario_id,
+        "scenario_name":        sc["name"],
+        "scenario_description": sc["description"],
+        "original_value":       round(total_orig, 2),
+        "simulated_value":      round(total_sim, 2),
+        "change":               round(delta, 2),
+        "change_pct":           round(delta_pct, 1),
+        "holdings_impact":      sorted(impacts, key=lambda x: x["change"]),
+        "advice":               advice_map.get(scenario_id, ""),
+    }
+
+# ── URL helper ────────────────────────────────────────────────────────────────
 def request_path(handler: BaseHTTPRequestHandler) -> str:
-    """
-    Normalized URL path for routing.
-
-    Vite (and other proxies) often send absolute-form request-targets, e.g.
-    POST http://127.0.0.1:8765/api/save-twin-layer — then handler.path is the
-    full URL string, not '/api/...', and strict equality routing returns 404.
-    """
     raw = (getattr(handler, "path", None) or "/").strip()
     if "?" in raw:
         raw = raw.split("?", 1)[0]
     if raw.startswith("http://") or raw.startswith("https://"):
         raw = urlparse(raw).path or "/"
-    raw = raw.rstrip("/") or "/"
-    return raw
+    return raw.rstrip("/") or "/"
 
-
-def _slug_segment(s: str, max_len: int = 48) -> str:
-    t = re.sub(r"[^a-zA-Z0-9._-]+", "_", (s or "").strip())
-    t = re.sub(r"_+", "_", t).strip("_")
-    return (t[:max_len] if t else "business") or "business"
-
-
-def _normalize_business_id(raw: object) -> str:
-    """Normalize business IDs so copy/paste quirks do not break lookups."""
-    txt = str(raw or "")
-    txt = txt.replace("\ufeff", "")
-    txt = re.sub(r"[\u200b\u200c\u200d]", "", txt)
-    return txt.strip().lower()
-
-
-def next_business_id() -> int:
-    """Return next sequential integer business ID from enrollment files."""
-    if not INPUT_DIR.is_dir():
-        return 1
-
-    max_id = 0
-    for p in INPUT_DIR.glob("input_newbusiness_*.json"):
-        parsed = _read_enrollment_record(p)
-        if parsed is None:
-            continue
-        _, business_id = parsed
-        txt = str(business_id).strip()
-        if txt.isdigit():
-            max_id = max(max_id, int(txt))
-    return max_id + 1
-
-
-def enrollment_filename(twin: dict) -> str:
-    """
-    input_newbusiness_<date>.json
-    """
-    meta = twin.get("meta") or {}
-    d_raw = meta.get("date")
-    if isinstance(d_raw, str):
-        m = re.match(r"^(\d{4}-\d{2}-\d{2})", d_raw.strip())
-        date_seg = m.group(1) if m else date.today().isoformat()
-    else:
-        date_seg = date.today().isoformat()
-    date_seg = _slug_segment(date_seg, max_len=10)
-    return f"input_newbusiness_{date_seg}.json"
-
-
-def unique_output_path(directory: Path, filename: str) -> Path:
-    """If filename exists, use name_2, name_3, ..."""
-    candidate = directory / filename
-    if not candidate.exists():
-        return candidate
-    stem = Path(filename).stem
-    suffix = Path(filename).suffix
-    n = 2
-    while True:
-        alt = directory / f"{stem}_{n}{suffix}"
-        if not alt.exists():
-            return alt
-        n += 1
-
-
-# twin_layer_to_ip1 imported from sim_bridge
-
-
-
-def _read_enrollment_record(path: Path) -> tuple[dict, str] | None:
-    """Read an enrollment output file and return (twin_layer, business_id)."""
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        twin = data.get("twin_layer")
-        if not isinstance(twin, dict) and isinstance(data.get("meta"), dict):
-            twin = data
-        if not isinstance(twin, dict):
-            return None
-        business_id = str((twin.get("meta") or {}).get("business_id") or "").strip()
-        if not business_id:
-            return None
-        return twin, business_id
-    except Exception:
-        return None
-
-
-def load_twin_layer_for_business(business_id: str) -> dict | None:
-    """Search through input_newbusiness_*.json files to find matching business_id."""
-    bid = _normalize_business_id(business_id)
-    if not bid:
-        return None
-    if not INPUT_DIR.is_dir():
-        return None
-
-    matches: list[tuple[float, dict]] = []
-    for p in INPUT_DIR.glob("input_newbusiness_*.json"):
-        parsed = _read_enrollment_record(p)
-        if parsed is None:
-            continue
-        twin, business_id = parsed
-        if _normalize_business_id(business_id) == bid:
-            matches.append((p.stat().st_mtime, twin))
-    
-    if not matches:
-        return None
-    matches.sort(key=lambda x: x[0], reverse=True)
-    return matches[0][1]
-
-
-def enrolled_business_ids(limit: int = 8) -> list[str]:
-    """Return recent unique enrolled business IDs for error diagnostics."""
-    if not INPUT_DIR.is_dir():
-        return []
-
-    found: list[tuple[float, str]] = []
-    for p in INPUT_DIR.glob("input_newbusiness_*.json"):
-        parsed = _read_enrollment_record(p)
-        if parsed is None:
-            continue
-        _, business_id = parsed
-        found.append((p.stat().st_mtime, business_id))
-
-    found.sort(key=lambda x: x[0], reverse=True)
-    uniq: list[str] = []
-    seen: set[str] = set()
-    for _, business_id in found:
-        key = _normalize_business_id(business_id)
-        if key and key not in seen:
-            uniq.append(business_id)
-            seen.add(key)
-        if len(uniq) >= limit:
-            break
-    return uniq
-
-
-def list_enrollments(limit: int = 100) -> list[dict]:
-    """Return recent enrollment records to drive simulation ID selection in UI."""
-    if not INPUT_DIR.is_dir():
-        return []
-
-    recs: list[tuple[float, dict]] = []
-    for p in INPUT_DIR.glob("input_newbusiness_*.json"):
-        parsed = _read_enrollment_record(p)
-        if parsed is None:
-            continue
-        twin, business_id = parsed
-        meta = twin.get("meta") or {}
-        recs.append((
-            p.stat().st_mtime,
-            {
-                "business_id": business_id,
-                "business_name": str(meta.get("business_name") or ""),
-                "date": str(meta.get("date") or ""),
-                "file": str(p.relative_to(REPO_ROOT)).replace("\\", "/"),
-            },
-        ))
-
-    recs.sort(key=lambda x: x[0], reverse=True)
-    return [r for _, r in recs[:limit]]
-
-
-
-
-def save_simulation_record(result: dict, business_name: str, experiment_label: str | None, sim_params: dict) -> None:
-    """Persist a simulation result to data/simulations/ for the history view."""
-    SIM_DIR.mkdir(parents=True, exist_ok=True)
-    from datetime import datetime
-    ts = datetime.now().strftime("%Y%m%dT%H%M%S")
-    business_id = str((result.get("op1") or {}).get("financials", {}).get("business_id") or
-                      sim_params.get("business_id") or "unknown")
-    use_case    = str(result.get("use_case") or sim_params.get("useCase") or "")
-    rec = result.get("recommendation") or ""
-    verdict     = "PROCEED WITH CAUTION"
-    if rec.startswith("DO NOT PROCEED"):      verdict = "DO NOT PROCEED"
-    elif rec.startswith("PROCEED WITH CAUTION"): verdict = "PROCEED WITH CAUTION"
-    elif rec.startswith("PROCEED"):            verdict = "PROCEED"
-    record = {
-        "business_id":       business_id,
-        "business_name":     business_name,
-        "experiment_label":  experiment_label or use_case.replace("_", " ").title(),
-        "use_case":          use_case,
-        "timestamp":         datetime.now().isoformat(timespec="seconds"),
-        "verdict":           verdict,
-        "asp_signal":        (result.get("asp_verdict") or {}).get("signal"),
-        "result":            result,
-    }
-    fname = f"sim_{business_id}_{ts}.json"
-    (SIM_DIR / fname).write_text(json.dumps(record, indent=2), encoding="utf-8")
-
-
-def list_simulation_records(limit: int = 50) -> list[dict]:
-    """Return simulation summaries sorted newest-first for the history view."""
-    if not SIM_DIR.is_dir():
-        return []
-    recs: list[tuple[float, dict]] = []
-    for p in SIM_DIR.glob("sim_*.json"):
-        try:
-            data = json.loads(p.read_text(encoding="utf-8"))
-            recs.append((p.stat().st_mtime, {
-                "id":               p.stem,
-                "business_id":      data.get("business_id"),
-                "business_name":    data.get("business_name"),
-                "experiment_label": data.get("experiment_label"),
-                "use_case":         data.get("use_case"),
-                "timestamp":        data.get("timestamp"),
-                "verdict":          data.get("verdict"),
-                "asp_signal":       data.get("asp_signal"),
-                "result":           data.get("result"),
-            }))
-        except Exception:
-            pass
-    recs.sort(key=lambda x: x[0], reverse=True)
-    return [r for _, r in recs[:limit]]
-
-
-def write_enrollment_json(twin: dict, result: dict) -> str:
-    """New file under backend/output/input/ each call; returns repo-relative path."""
-    INPUT_DIR.mkdir(parents=True, exist_ok=True)
-    path = unique_output_path(INPUT_DIR, enrollment_filename(twin))
-    path.write_text(json.dumps(result, indent=2), encoding="utf-8")
-    return str(path.relative_to(REPO_ROOT)).replace("\\", "/")
-
-
-
+# ── HTTP handler ──────────────────────────────────────────────────────────────
 class Handler(BaseHTTPRequestHandler):
-    def log_message(self, fmt: str, *args: object) -> None:
-        print("%s - %s" % (self.address_string(), fmt % args))
+    def log_message(self, fmt, *args):
+        print(f"  {self.address_string()} {fmt % args}")
 
-    def _headers(self, code: int, content_type: str = "application/json") -> None:
-        self.send_response(code)
-        self.send_header("Content-Type", content_type)
+    def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.end_headers()
 
-    def do_OPTIONS(self) -> None:
+    def _json(self, data, status=200):
+        body = json.dumps(data, default=str).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self._cors()
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _read_json(self):
+        n = int(self.headers.get("Content-Length", 0))
+        return json.loads(self.rfile.read(n)) if n else {}
+
+    def do_OPTIONS(self):
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self._cors()
         self.end_headers()
 
-    def do_GET(self) -> None:
-        path = request_path(self)
-        if path == "/api/health":
-            self._headers(200)
-            self.wfile.write(json.dumps({"ok": True, "service": "twintrack-sim"}).encode("utf-8"))
-            return
-        if path == "/api/enrollments":
-            self._headers(200)
-            self.wfile.write(json.dumps({"ok": True, "items": list_enrollments()}).encode("utf-8"))
-            return
-        if path == "/api/simulations":
-            self._headers(200)
-            self.wfile.write(json.dumps({"ok": True, "items": list_simulation_records()}).encode("utf-8"))
-            return
-        self._headers(404)
-        self.wfile.write(json.dumps({"error": "not found"}).encode("utf-8"))
+    def do_GET(self):
+        p = request_path(self)
+        if p == "/api/portfolio":
+            return self._json(load_portfolio())
+        if p == "/api/scenarios":
+            return self._json({k: {"name": v["name"], "icon": v["icon"], "description": v["description"]}
+                                for k, v in SCENARIOS.items()})
+        if p == "/api/health":
+            return self._json({"ok": True, "service": "folio"})
+        self._json({"error": "Not found"}, 404)
 
-    def do_POST(self) -> None:
-        raw_path = getattr(self, "path", None)
-        path = request_path(self)
-        print(f"[POST] Raw path: {raw_path}")
-        print(f"[POST] Normalized path: {path}")
-        print(f"[POST] Path == '/api/simulate': {path == '/api/simulate'}")
-        print(f"[POST] Path == '/api/save-twin-layer': {path == '/api/save-twin-layer'}")
-        if path not in ("/api/save-twin-layer", "/api/update-twin-layer", "/api/simulate", "/api/suggest-scenarios"):
-            print(f"[POST] Path not recognized, returning 404")
-            self._headers(404)
-            self.wfile.write(json.dumps({"error": "not found"}).encode("utf-8"))
-            return
-
-        length = int(self.headers.get("Content-Length", 0))
-        raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+    def do_POST(self):
+        p = request_path(self)
         try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError as e:
-            self._headers(400)
-            self.wfile.write(json.dumps({"error": "invalid json", "detail": str(e)}).encode("utf-8"))
-            return
+            body = self._read_json()
+        except Exception as e:
+            return self._json({"error": f"Invalid JSON: {e}"}, 400)
 
-        if path == "/api/simulate":
-            business_id    = str(payload.get("business_id") or "").strip()
-            sim_params     = payload.get("sim") or {}
-            nl_description = str(sim_params.get("nlDescription") or "").strip()
+        if p == "/api/portfolio":
+            save_portfolio(body)
+            return self._json({"ok": True})
 
-            if not business_id:
-                self._headers(400)
-                self.wfile.write(json.dumps({"error": "business_id is required"}).encode("utf-8"))
-                return
+        if p == "/api/portfolio/add":
+            port = load_portfolio()
+            h = dict(body)
+            h["id"] = h.get("id") or f"h{uuid.uuid4().hex[:8]}"
+            port["holdings"].append(h)
+            save_portfolio(port)
+            return self._json({"ok": True, "portfolio": port})
 
-            twin = load_twin_layer_for_business(business_id)
-            if twin is None:
-                self._headers(404)
-                self.wfile.write(json.dumps({
-                    "error": f"No enrolled business found for business_id '{business_id}'",
-                    "available_business_ids": enrolled_business_ids(),
-                }).encode("utf-8"))
-                return
+        if p == "/api/portfolio/update":
+            port = load_portfolio()
+            hid  = body.get("id")
+            port["holdings"] = [body if h["id"] == hid else h for h in port["holdings"]]
+            save_portfolio(port)
+            return self._json({"ok": True, "portfolio": port})
 
-            ip1 = _twin_to_ip1(twin)
+        if p == "/api/portfolio/remove":
+            port = load_portfolio()
+            hid  = body.get("id")
+            port["holdings"] = [h for h in port["holdings"] if h["id"] != hid]
+            save_portfolio(port)
+            return self._json({"ok": True, "portfolio": port})
 
-            try:
-                from agents.orchestrator import run_simulate_pipeline
-                result = run_simulate_pipeline(twin, ip1, sim_params, nl_description)
-                business_name  = str((twin.get("meta") or {}).get("business_name") or "Business")
-                experiment_label = str(sim_params.get("experimentLabel") or "").strip() or None
-                try:
-                    save_simulation_record(result, business_name, experiment_label, sim_params)
-                except Exception as _se:
-                    print(f"[server] Warning: could not save simulation record: {_se}")
-                self._headers(200)
-                self.wfile.write(json.dumps({"ok": True, "result": result}).encode("utf-8"))
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                self._headers(500)
-                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
-            return
+        if p == "/api/prices":
+            syms   = body.get("symbols", [])
+            prices = fetch_prices(syms)
+            return self._json({"prices": prices})
 
-        if path == "/api/suggest-scenarios":
-            business_id = str(payload.get("business_id") or "").strip()
+        if p == "/api/risk":
+            return self._json(calc_risk(body.get("portfolio", {}), body.get("prices", {})))
 
-            if not business_id:
-                self._headers(400)
-                self.wfile.write(json.dumps({"error": "business_id is required"}).encode("utf-8"))
-                return
+        if p == "/api/rebalance":
+            return self._json(calc_rebalance(body.get("portfolio", {}), body.get("prices", {})))
 
-            twin = load_twin_layer_for_business(business_id)
-            if twin is None:
-                self._headers(404)
-                self.wfile.write(json.dumps({
-                    "error": f"No enrolled business found for business_id '{business_id}'",
-                    "available_business_ids": enrolled_business_ids(),
-                }).encode("utf-8"))
-                return
+        if p == "/api/scenario":
+            return self._json(calc_scenario(
+                body.get("portfolio", {}),
+                body.get("prices", {}),
+                body.get("scenario_id", "market_crash"),
+            ))
 
-            try:
-                from ml.main import build_market_snapshot
-                from agents.scenario_agent import suggest_scenarios
-
-                ip1          = _twin_to_ip1(twin)
-                ms           = build_market_snapshot(twin)
-                business_name = str((twin.get("meta") or {}).get("business_name") or "Business")
-                scenarios    = suggest_scenarios(ip1, ms, business_name)
-
-                self._headers(200)
-                self.wfile.write(json.dumps({"ok": True, "scenarios": scenarios}).encode("utf-8"))
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                self._headers(500)
-                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
-            return
-
-        if path == "/api/save-twin-layer":
-            twin = payload.get("twin_layer")
-            if not (isinstance(twin, dict) and twin.get("meta")):
-                self._headers(400)
-                self.wfile.write(json.dumps({"error": "twin_layer with meta is required"}).encode("utf-8"))
-                return
-            meta = twin.get("meta") or {}
-
-            assigned_id = next_business_id()
-            meta["business_id"] = str(assigned_id)
-            meta["type"] = "base"
-            twin["meta"] = meta
-            
-            ip1 = _twin_to_ip1(twin)
-            result = {
-                "twin_layer": twin,
-                "sim": None,
-                "ip1": ip1,
-                "ip2": None,
-                "output": None,
-            }
-            saved_to = write_enrollment_json(twin, result)
-            self._headers(200)
-            self.wfile.write(json.dumps({"ok": True, "saved_to": saved_to, "result": result}).encode("utf-8"))
-            return
-
-        # Handle /api/update-twin-layer
-        if path == "/api/update-twin-layer":
-            business_id   = str(payload.get("business_id") or "").strip()
-            effective_date = str(payload.get("effective_date") or date.today().isoformat()).strip()
-            delta_notes   = str(payload.get("delta_notes") or "").strip()
-            optional      = payload.get("optional_metrics") or {}
-            revenue_current = optional.get("revenue_current")
-            costs_current   = optional.get("costs_current")
-
-            if not business_id:
-                self._headers(400)
-                self.wfile.write(json.dumps({"error": "business_id is required"}).encode("utf-8"))
-                return
-
-            twin = load_twin_layer_for_business(business_id)
-            if twin is None:
-                self._headers(404)
-                self.wfile.write(json.dumps({
-                    "error": f"No enrolled business found for business_id '{business_id}'",
-                    "available_business_ids": enrolled_business_ids(),
-                }).encode("utf-8"))
-                return
-
-            import copy
-            twin = copy.deepcopy(twin)
-
-            # Apply revenue update (owner provides monthly figure)
-            if revenue_current is not None:
-                try:
-                    twin.setdefault("revenue", {})["total_annual"] = round(float(revenue_current) * 12, 2)
-                except (TypeError, ValueError):
-                    pass
-
-            # Apply costs update — scale existing line items proportionally
-            if costs_current is not None:
-                try:
-                    costs_current = float(costs_current)
-                    c     = twin.get("costs") or {}
-                    staff = twin.get("staffing") or {}
-                    line_items = [
-                        float(c.get("monthly_rent")       or 0),
-                        float(c.get("monthly_utilities")  or 0),
-                        float(c.get("monthly_supplies")   or 0),
-                        float(staff.get("monthly_wage_bill") or 0),
-                        float((c.get("loan") or {}).get("monthly_repayment") or 0),
-                    ]
-                    current_total = sum(line_items)
-                    if current_total > 0:
-                        scale = costs_current / current_total
-                        twin["costs"]["monthly_rent"]      = round(line_items[0] * scale, 2)
-                        twin["costs"]["monthly_utilities"] = round(line_items[1] * scale, 2)
-                        twin["costs"]["monthly_supplies"]  = round(line_items[2] * scale, 2)
-                        twin.setdefault("staffing", {})["monthly_wage_bill"] = round(line_items[3] * scale, 2)
-                        if "loan" in twin.get("costs", {}):
-                            twin["costs"]["loan"]["monthly_repayment"] = round(line_items[4] * scale, 2)
-                except (TypeError, ValueError):
-                    pass
-
-            # Bump version and stamp effective date + notes
-            meta = twin.get("meta") or {}
-            new_version = int(meta.get("version") or 1) + 1
-            meta["version"]      = new_version
-            meta["date"]         = effective_date
-            meta["update_notes"] = delta_notes
-            meta["type"]         = "base"
-            twin["meta"]         = meta
-
-            # Recompute IP1 with updated financials
-            ip1 = _twin_to_ip1(twin)
-            result = {"twin_layer": twin, "sim": None, "ip1": ip1, "ip2": None, "output": None}
-
-            # Write versioned file: input_newbusiness_<id>_v<N>_<date>.json
-            INPUT_DIR.mkdir(parents=True, exist_ok=True)
-            filename = f"input_newbusiness_{_slug_segment(business_id)}_v{new_version}_{_slug_segment(effective_date, 10)}.json"
-            path_out = unique_output_path(INPUT_DIR, filename)
-            path_out.write_text(json.dumps(result, indent=2), encoding="utf-8")
-            saved_to = str(path_out.relative_to(REPO_ROOT)).replace("\\", "/")
-
-            print(f"[update] Business {business_id} → v{new_version} saved to {saved_to}")
-            self._headers(200)
-            self.wfile.write(json.dumps({
-                "ok": True, "saved_to": saved_to, "version": new_version, "result": result,
-            }).encode("utf-8"))
-            return
-
-
-
-def main() -> None:
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
-    print("TwinTrack enrollment API")
-    print(f"  http://127.0.0.1:{port}/api/health")
-    print(f"  POST http://127.0.0.1:{port}/api/save-twin-layer")
-    print(f"  POST http://127.0.0.1:{port}/api/update-twin-layer")
-    print(f"  enrollment -> data/base/input_newbusiness_<date>.json")
-    ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+        self._json({"error": "Not found"}, 404)
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"Folio API  →  http://127.0.0.1:{port}")
+    ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+
+

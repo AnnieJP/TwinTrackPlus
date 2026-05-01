@@ -10,19 +10,22 @@ import { useState, useEffect } from "react";
      onBack  = () => void
    ───────────────────────────────────────────────────────────────── */
 
-/* ── Colour tokens ── */
+/* ── Colour tokens — Midnight & Gold ── */
 const C = {
-  bg:        "#060c1a",
-  surface:   "#080f20",
-  border:    "rgba(255,255,255,0.07)",
-  accent:    "#0d9488",
-  accentSoft:"#ccfbf1",
-  text:      "#c8d6f0",
-  textDim:   "#3d5570",
-  textMid:   "#4a6888",
-  green:     "#059669",
-  red:       "#f87171",
-  amber:     "#fbbf24",
+  bg:         "#06101F",
+  surface:    "#0D1F3C",
+  surfaceUp:  "#152B52",
+  border:     "#2A649440",
+  accent:     "#2A6496",
+  accentSoft: "#D6E8FA",
+  gold:       "#C9A227",
+  goldLight:  "#F0CE6A",
+  text:       "#D6E8FA",
+  textDim:    "#6E96C0",
+  textMid:    "#6E96C0",
+  green:      "#059669",
+  red:        "#f87171",
+  amber:      "#fbbf24",
 };
 
 /* ── Shared styles ── */
@@ -30,7 +33,7 @@ const s = {
   root:  { minHeight:"100vh", background:C.bg, color:C.text, fontFamily:"'DM Sans','Segoe UI',system-ui,sans-serif", boxSizing:"border-box" },
   inner: { maxWidth:1140, margin:"0 auto", padding:"28px 32px 80px" },
   card:  { background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:"20px 22px" },
-  accentCard: { background:"rgba(13,148,136,0.07)", border:"1px solid rgba(13,148,136,0.22)", borderRadius:14, padding:"20px 22px" },
+  accentCard: { background:"#C9A22710", border:"1px solid #C9A22730", borderRadius:14, padding:"20px 22px" },
   label: { fontSize:10.5, fontWeight:700, letterSpacing:"0.14em", textTransform:"uppercase", color:C.textDim, marginBottom:12 },
   chip:  (color) => ({ display:"inline-flex", alignItems:"center", padding:"3px 10px", borderRadius:99, fontSize:11.5, fontWeight:600, letterSpacing:"0.02em", background:color+"22", border:`1px solid ${color}44`, color }),
   deltaUp:   { color:C.green, fontSize:12, fontWeight:700, padding:"2px 8px", borderRadius:99, background:"rgba(52,211,153,0.1)", border:"1px solid rgba(52,211,153,0.2)" },
@@ -119,7 +122,7 @@ function SentimentBar({ score }) {
   const label = score < -0.2 ? "Slightly Negative" : score < 0.2 ? "Neutral" : "Positive";
   return (
     <div style={{ display:"flex", alignItems:"center", gap:14 }}>
-      <div style={{ flex:1, height:6, borderRadius:99, background:"rgba(255,255,255,0.06)", position:"relative", overflow:"hidden" }}>
+      <div style={{ flex:1, height:6, borderRadius:99, background:C.surfaceUp, position:"relative", overflow:"hidden" }}>
         <div style={{ position:"absolute", left:0, top:0, height:"100%", width:`${pct}%`, background:`linear-gradient(90deg,${C.red},${color === C.green ? "#059669" : color})`, borderRadius:99, transition:"width 0.6s ease" }} />
       </div>
       <span style={{ fontSize:12.5, fontWeight:700, color, flexShrink:0 }}>{score.toFixed(2)} — {label}</span>
@@ -136,14 +139,14 @@ function ConfidenceRing({ score }) {
   return (
     <div style={{ display:"flex", alignItems:"center", gap:14 }}>
       <svg width={72} height={72} style={{ transform:"rotate(-90deg)" }}>
-        <circle cx={36} cy={36} r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={6} />
+        <circle cx={36} cy={36} r={r} fill="none" stroke={C.surfaceUp} strokeWidth={6} />
         <circle cx={36} cy={36} r={r} fill="none" stroke={color} strokeWidth={6}
           strokeDasharray={circ} strokeDashoffset={dash} strokeLinecap="round"
           style={{ transition:"stroke-dashoffset 1s ease" }} />
       </svg>
       <div>
         <p style={{ margin:0, fontSize:26, fontWeight:800, color, letterSpacing:"-0.04em" }}>{pct}%</p>
-        <p style={{ margin:0, fontSize:11, color:C.textDim, fontWeight:600 }}>Confidence Score</p>
+        <p style={{ margin:0, fontSize:11, color:C.textMid, fontWeight:600 }}>Confidence Score</p>
       </div>
     </div>
   );
@@ -205,8 +208,8 @@ function LineChart({ proj_op1, proj_op2, currentRevenue = 0 }) {
           <stop offset="100%" stopColor="rgba(100,130,170,0)"    />
         </linearGradient>
         <linearGradient id="op2fill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%"   stopColor="rgba(13,148,136,0.22)" />
-          <stop offset="100%" stopColor="rgba(13,148,136,0)"    />
+          <stop offset="0%"   stopColor="rgba(42,100,150,0.22)" />
+          <stop offset="100%" stopColor="rgba(42,100,150,0)"    />
         </linearGradient>
       </defs>
 
@@ -231,7 +234,7 @@ function LineChart({ proj_op1, proj_op2, currentRevenue = 0 }) {
       )}
       {pts2.length > 1 && (
         <polyline points={toPolyline(pts2)}
-          fill="none" stroke="rgba(13,148,136,0.9)" strokeWidth={2} strokeLinejoin="round" />
+          fill="none" stroke="rgba(42,100,150,0.9)" strokeWidth={2} strokeLinejoin="round" />
       )}
 
       {/* Dots + X-axis labels */}
@@ -250,7 +253,7 @@ function LineChart({ proj_op1, proj_op2, currentRevenue = 0 }) {
                   {p1 && <circle cx={toX(i)} cy={toY(p1.value)} r={3.5}
                     fill={C.bg} stroke="rgba(100,130,170,0.7)" strokeWidth={2} />}
                   {p2 && <circle cx={toX(i)} cy={toY(p2.value)} r={3.5}
-                    fill={C.bg} stroke="rgba(13,148,136,1)" strokeWidth={2} />}
+                    fill={C.bg} stroke="#2A6496" strokeWidth={2} />}
                 </>
             }
             <text x={toX(i)} y={H-8} textAnchor="middle"
@@ -263,9 +266,163 @@ function LineChart({ proj_op1, proj_op2, currentRevenue = 0 }) {
   );
 }
 
+/* ── Verdict Banner ── */
+function VerdictBanner({ recommendation }) {
+  if (!recommendation) return null;
+  let verdict, color, bg, icon;
+  if (recommendation.startsWith("DO NOT PROCEED")) {
+    verdict = "DO NOT PROCEED"; color = C.red;
+    bg = "rgba(248,113,113,0.08)"; icon = "⛔";
+  } else if (recommendation.startsWith("PROCEED WITH CAUTION")) {
+    verdict = "PROCEED WITH CAUTION"; color = C.amber;
+    bg = "rgba(251,191,36,0.08)"; icon = "⚠️";
+  } else if (recommendation.startsWith("PROCEED")) {
+    verdict = "PROCEED"; color = C.green;
+    bg = "rgba(5,150,105,0.1)"; icon = "✓";
+  } else {
+    return null;
+  }
+  const rest = recommendation.slice(verdict.length).replace(/^[:\s—\-]+/, "").trim();
+  return (
+    <div style={{ background: bg, border: `1px solid ${color}44`, borderRadius: 14, padding: "18px 24px", marginBottom: 28, display: "flex", alignItems: "flex-start", gap: 16 }}>
+      <span style={{ fontSize: 22, flexShrink: 0, marginTop: 1 }}>{icon}</span>
+      <div style={{ flex: 1 }}>
+        <p style={{ margin:"0 0 4px", fontSize:10.5, fontWeight:700, letterSpacing:"0.14em", textTransform:"uppercase", color:C.gold }}>AI Verdict</p>
+        <p style={{ margin: "0 0 6px", fontSize: 22, fontWeight: 800, color, letterSpacing: "-0.03em", lineHeight: 1.1 }}>{verdict}</p>
+        {rest && <p style={{ margin: 0, fontSize: 13, color: C.textMid, lineHeight: 1.65 }}>{rest}</p>}
+      </div>
+    </div>
+  );
+}
+
+/* ── Pipeline Breadcrumb ── */
+function PipelineBreadcrumb({ agentLog }) {
+  const steps = [
+    { key: "fetch",      label: "5 Live APIs",     always: true },
+    { key: "arima",      label: "ARIMA Forecast",  always: true },
+    { key: "enrichment", label: "Enrichment",      agent: "enrichment_agent" },
+    { key: "simulation", label: "Simulation",      agent: "simulation_engine" },
+    { key: "critique",   label: "Critique",        agent: "critique_agent" },
+    { key: "asp",        label: "ASP Rules Engine", agent: "decision_engine" },
+    { key: "prose",      label: "LLM Prose",       agent: "simulation_agent" },
+  ];
+  const ran = new Set((agentLog || []).map(e => e.agent));
+  return (
+    <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 0, marginBottom: 28 }}>
+      {steps.map((step, i) => {
+        const active = step.always || ran.has(step.agent);
+        return (
+          <div key={step.key} style={{ display: "flex", alignItems: "center" }}>
+            {i > 0 && <span style={{ color: C.textDim, fontSize: 10, margin: "0 6px" }}>→</span>}
+            <span style={{
+              fontSize: 10.5, fontWeight: 600, padding: "3px 10px", borderRadius: 99,
+              background: active ? "#C9A22712" : C.surface,
+              border: active ? "1px solid #C9A22740" : `1px solid ${C.border}`,
+              color: active ? C.gold : C.textDim,
+              letterSpacing: "0.04em",
+            }}>{step.label}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ── Critique Panel ── */
+function CritiquePanel({ agentLog, flags }) {
+  const critiqueEntry = (agentLog || []).find(e => e.agent === "critique_agent" && e.action === "critiqued");
+  const adjustEntry   = (agentLog || []).find(e => e.agent === "critique_agent" && e.action === "confidence_adjusted");
+  if (!critiqueEntry) return null;
+
+  const nFindings    = critiqueEntry.adjustments?.findings_count ?? 0;
+  const penalty      = critiqueEntry.adjustments?.penalty_applied;
+  const adjBefore    = adjustEntry?.adjustments?.confidence_score?.before;
+  const adjAfter     = adjustEntry?.adjustments?.confidence_score?.after;
+  const critiqueVerdict = critiqueEntry.notes?.slice(critiqueEntry.notes.indexOf(". ") + 2) || "";
+  const agentFlags   = (flags || []).filter(f => f.source === "critique" || !f.source);
+
+  const headerColor  = nFindings === 0 ? C.green : penalty ? C.red : C.amber;
+
+  return (
+    <div style={{ background: C.surface, border: `1px solid ${headerColor}33`, borderRadius: 14, padding: "20px 22px", marginBottom: 28 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <p style={{ margin: "0 0 4px", fontSize: 10.5, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: C.textDim }}>Critique Agent</p>
+          <p style={{ margin: 0, fontSize: 12, color: C.textMid }}>Reviewed projection vs. market context</p>
+        </div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ padding: "4px 12px", borderRadius: 99, fontSize: 11.5, fontWeight: 700, background: `${headerColor}18`, border: `1px solid ${headerColor}44`, color: headerColor }}>
+            {nFindings === 0 ? "No contradictions" : `${nFindings} contradiction${nFindings > 1 ? "s" : ""} found`}
+          </span>
+          {penalty != null && (
+            <span style={{ padding: "4px 12px", borderRadius: 99, fontSize: 11.5, fontWeight: 700, background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.3)", color: C.red }}>
+              Confidence −{(penalty * 100).toFixed(0)}pp
+            </span>
+          )}
+          {adjBefore != null && adjAfter != null && (
+            <span style={{ padding: "4px 12px", borderRadius: 99, fontSize: 11.5, fontWeight: 600, background: C.surfaceUp, border: `1px solid ${C.border}`, color: C.textMid }}>
+              {(adjBefore * 100).toFixed(0)}% → {(adjAfter * 100).toFixed(0)}%
+            </span>
+          )}
+        </div>
+      </div>
+      {agentFlags.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: critiqueVerdict ? 14 : 0 }}>
+          {agentFlags.slice(0, 3).map((f, i) => {
+            const impact = f.impact || "neutral";
+            const fc = impact === "negative" ? C.red : impact === "positive" ? C.green : C.amber;
+            return (
+              <div key={i} style={{ display: "flex", gap: 10, padding: "10px 14px", borderRadius: 9, background: `${fc}08`, border: `1px solid ${fc}22` }}>
+                <span style={{ fontSize: 11, color: fc, fontWeight: 700, flexShrink: 0, marginTop: 1 }}>{impact.toUpperCase()}</span>
+                <p style={{ margin: 0, fontSize: 12, color: C.textMid, lineHeight: 1.55 }}>{f.headline} — {f.relevance}</p>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {critiqueVerdict && (
+        <p style={{ margin: 0, fontSize: 12, color: C.textDim, fontStyle: "italic", borderTop: `1px solid ${C.border}`, paddingTop: 12 }}>
+          Agent verdict: “{critiqueVerdict}”
+        </p>
+      )}
+    </div>
+  );
+}
+
+/* ── Credit Risk Card ── */
+function CreditRiskCard({ creditRisk }) {
+  if (!creditRisk) return null;
+  const sigColor = {
+    creditworthy:  C.green,
+    elevated_risk: C.amber,
+    high_risk:     C.red,
+  }[creditRisk.signal] || C.textDim;
+  const sigDot = {
+    creditworthy:  "●",
+    elevated_risk: "◆",
+    high_risk:     "▲",
+  }[creditRisk.signal] || "●";
+  return (
+    <div style={{ background: sigColor + "0d", border: `1px solid ${sigColor}33`, borderRadius:14, padding:"20px 22px" }}>
+      <p style={{ margin:"0 0 10px", fontSize:10.5, fontWeight:700, letterSpacing:"0.14em", textTransform:"uppercase", color:C.textDim }}>Credit Risk Signal</p>
+      <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:14 }}>
+        <span style={{ fontSize:18, color:sigColor }}>{sigDot}</span>
+        <span style={{ fontSize:20, fontWeight:800, color:sigColor, letterSpacing:"-0.02em" }}>{creditRisk.label}</span>
+      </div>
+      <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+        {(creditRisk.reasons || []).map((r, i) => (
+          <div key={i} style={{ display:"flex", alignItems:"flex-start", gap:8 }}>
+            <span style={{ fontSize:10, color:sigColor, marginTop:2, flexShrink:0 }}>—</span>
+            <p style={{ margin:0, fontSize:12, color:C.textMid, lineHeight:1.55 }}>{r}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /* ── Main Dashboard ── */
-export default function Dashboard({ biz, expMeta, op1, op2, recommendation, onBack }) {
-  const [recoOpen, setRecoOpen] = useState(true);
+export default function Dashboard({ biz, expMeta, op1, op2, recommendation, agentLog, onBack }) {
   const [visible,  setVisible]  = useState(false);
   const [copied,   setCopied]   = useState(false);
   useEffect(() => { const t = setTimeout(() => setVisible(true), 60); return () => clearTimeout(t); }, []);
@@ -281,6 +438,7 @@ export default function Dashboard({ biz, expMeta, op1, op2, recommendation, onBa
   const flags = risk.flags || [];
   const sentiment = risk.sentiment_score ?? 0;
   const confidence = risk.confidence_score ?? 0;
+  const creditRisk = op2?.credit_risk || null;
 
   /* Net income delta */
   const netDelta = d.profit_delta || 0;
@@ -300,6 +458,11 @@ export default function Dashboard({ biz, expMeta, op1, op2, recommendation, onBa
     `}</style>
     <div style={s.root}>
       <div style={s.inner}>
+
+        {/* Verdict Banner */}
+        <div style={fade}>
+          <VerdictBanner recommendation={recommendation} />
+        </div>
 
         {/* Top bar — back + export actions */}
         <div className="no-print" style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:28 }}>
@@ -321,7 +484,7 @@ export default function Dashboard({ biz, expMeta, op1, op2, recommendation, onBa
             </button>
             <button
               onClick={() => window.print()}
-              style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"7px 14px", borderRadius:8, border:`1px solid rgba(13,148,136,0.35)`, background:"rgba(13,148,136,0.08)", color:C.accentSoft, fontSize:12.5, cursor:"pointer", fontFamily:"inherit" }}
+              style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"7px 14px", borderRadius:8, border:`1px solid ${C.border}`, background:C.surfaceUp, color:C.text, fontSize:12.5, cursor:"pointer", fontFamily:"inherit" }}
             >
               Save as PDF
             </button>
@@ -332,15 +495,15 @@ export default function Dashboard({ biz, expMeta, op1, op2, recommendation, onBa
         <div style={{ ...fade, marginBottom:28 }}>
           <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", flexWrap:"wrap", gap:12 }}>
             <div>
-              <p style={{ fontSize:10.5, fontWeight:700, letterSpacing:"0.16em", textTransform:"uppercase", color:C.accentSoft, margin:"0 0 6px" }}>Simulation Results</p>
-              <h1 style={{ fontSize:26, fontWeight:800, letterSpacing:"-0.04em", color:"#e0eeff", margin:"0 0 8px", lineHeight:1.15 }}>{biz?.name || "Business"}</h1>
+              <p style={{ fontSize:10.5, fontWeight:700, letterSpacing:"0.16em", textTransform:"uppercase", color:C.textDim, margin:"0 0 6px" }}>Simulation Results</p>
+              <h1 style={{ fontSize:26, fontWeight:800, letterSpacing:"-0.04em", color:C.text, margin:"0 0 8px", lineHeight:1.15 }}>{biz?.name || "Business"}</h1>
               <div style={{ display:"flex", flexWrap:"wrap", gap:7 }}>
                 {expMeta?.label && expMeta.label !== expMeta?.useCase && (
-                  <span style={s.chip("#0d9488")}>{expMeta.label}</span>
+                  <span style={s.chip(C.gold)}>{expMeta.label}</span>
                 )}
-                <span style={s.chip("#a78bfa")}>{expMeta?.useCase || "Use Case"}</span>
-                <span style={s.chip("#6080a8")}>{biz?.location || "Location"}</span>
-                <span style={s.chip("#3d5570")}>{expMeta?.date || new Date().toLocaleDateString()}</span>
+                <span style={s.chip(C.accent)}>{expMeta?.useCase || "Use Case"}</span>
+                <span style={s.chip(C.accent)}>{biz?.location || "Location"}</span>
+                <span style={s.chip(C.textDim)}>{expMeta?.date || new Date().toLocaleDateString()}</span>
               </div>
             </div>
             <div style={{ ...s.card, textAlign:"right", minWidth:200 }}>
@@ -349,6 +512,11 @@ export default function Dashboard({ biz, expMeta, op1, op2, recommendation, onBa
               <SentimentBar score={sentiment} />
             </div>
           </div>
+        </div>
+
+        {/* Pipeline Breadcrumb */}
+        <div style={{ ...fade, transitionDelay:"0.04s" }}>
+          <PipelineBreadcrumb agentLog={agentLog} />
         </div>
 
         {/* KPI Grid */}
@@ -361,12 +529,12 @@ export default function Dashboard({ biz, expMeta, op1, op2, recommendation, onBa
               { label:"Foot Traffic",    ctrl:fmtN(f1.footfall||0),   expt:fmtN(f2.footfall||0),   delta:fmtDelta((f2.footfall||0)-(f1.footfall||0),"#"), highlight:false, explain:expl.footfall },
               { label:"Avg Transaction", ctrl:fmt$(f1.avg_ticket||0), expt:fmt$(f2.avg_ticket||0), delta:fmtDelta((f2.avg_ticket||0)-(f1.avg_ticket||0)), highlight:false, explain:expl.avg_ticket },
             ].map((k) => (
-              <div key={k.label} style={{ background: k.highlight ? "rgba(13,148,136,0.08)" : C.surface, border: k.highlight ? "1px solid rgba(13,148,136,0.28)" : `1px solid ${C.border}`, borderRadius:14, padding:"18px 20px" }}>
+              <div key={k.label} style={{ background: k.highlight ? C.surfaceUp : C.surface, border: k.highlight ? `1px solid ${C.accent}55` : `1px solid ${C.border}`, borderRadius:14, padding:"18px 20px" }}>
                 <p style={{ margin:"0 0 12px", fontSize:11.5, fontWeight:600, color:C.textDim, letterSpacing:"0.03em", textTransform:"uppercase" }}>{k.label}</p>
                 <div style={{ display:"flex", alignItems:"baseline", gap:8, marginBottom:8, flexWrap:"wrap" }}>
-                  <span style={{ fontSize:13, color:"#5070a0", textDecoration:"line-through", textDecorationColor:"rgba(80,112,160,0.4)" }}>{k.ctrl}</span>
-                  <span style={{ fontSize:16, color:"#8a9a9a", margin:"0 2px" }}>→</span>
-                  <span style={{ fontSize:20, fontWeight:800, color:"#d0e4ff", letterSpacing:"-0.02em" }}>{k.expt}</span>
+                  <span style={{ fontSize:13, color:C.textDim, textDecoration:"line-through", textDecorationColor:`${C.textDim}55` }}>{k.ctrl}</span>
+                  <span style={{ fontSize:16, color:C.textDim, margin:"0 2px" }}>→</span>
+                  <span style={{ fontSize:20, fontWeight:800, color:C.text, letterSpacing:"-0.02em" }}>{k.expt}</span>
                 </div>
                 {k.delta}
                 {k.explain && (
@@ -396,6 +564,19 @@ export default function Dashboard({ biz, expMeta, op1, op2, recommendation, onBa
           </div>
         </div>
 
+        {/* Critique Agent Panel */}
+        <div style={{ ...fade, transitionDelay:"0.11s" }}>
+          <CritiquePanel agentLog={agentLog} flags={flags} />
+        </div>
+
+        {/* Lender View — Credit Risk Signal */}
+        {creditRisk && (
+          <div style={{ ...fade, marginBottom:28, transitionDelay:"0.12s" }}>
+            <p style={s.label}>Lender View</p>
+            <CreditRiskCard creditRisk={creditRisk} />
+          </div>
+        )}
+
         {/* Revenue Projection Chart */}
         {proj1.length > 0 && (
           <div style={{ ...fade, ...s.card, marginBottom:28, transitionDelay:"0.15s" }}>
@@ -405,16 +586,16 @@ export default function Dashboard({ biz, expMeta, op1, op2, recommendation, onBa
                 <div style={{ display:"flex", alignItems:"center", gap:6 }}>
                   <svg width={24} height={10} style={{ flexShrink:0 }}>
                     <line x1={0} y1={5} x2={24} y2={5} stroke="rgba(100,130,170,0.6)" strokeWidth={2} />
-                    <circle cx={12} cy={5} r={3} fill="#060c1a" stroke="rgba(100,130,170,0.7)" strokeWidth={2} />
+                    <circle cx={12} cy={5} r={3} fill={C.bg} stroke="rgba(100,130,170,0.7)" strokeWidth={2} />
                   </svg>
-                  <span style={{ fontSize:11, color:"#5070a0", fontWeight:600 }}>Control</span>
+                  <span style={{ fontSize:11, color:C.textDim, fontWeight:600 }}>Control</span>
                 </div>
                 <div style={{ display:"flex", alignItems:"center", gap:6 }}>
                   <svg width={24} height={10} style={{ flexShrink:0 }}>
-                    <line x1={0} y1={5} x2={24} y2={5} stroke="rgba(13,148,136,0.9)" strokeWidth={2} />
-                    <circle cx={12} cy={5} r={3} fill="#060c1a" stroke="rgba(13,148,136,1)" strokeWidth={2} />
+                    <line x1={0} y1={5} x2={24} y2={5} stroke="rgba(42,100,150,0.9)" strokeWidth={2} />
+                    <circle cx={12} cy={5} r={3} fill={C.bg} stroke="#2A6496" strokeWidth={2} />
                   </svg>
-                  <span style={{ fontSize:11, color:C.accentSoft, fontWeight:600 }}>Experiment</span>
+                  <span style={{ fontSize:11, color:C.text, fontWeight:600 }}>Experiment</span>
                 </div>
               </div>
             </div>
@@ -429,7 +610,7 @@ export default function Dashboard({ biz, expMeta, op1, op2, recommendation, onBa
             {/* OP1 */}
             <div style={s.card}>
               <p style={{ margin:"0 0 4px", fontSize:11, fontWeight:700, letterSpacing:"0.14em", textTransform:"uppercase", color:C.textDim }}>Control Baseline</p>
-              <p style={{ margin:"0 0 16px", fontSize:12, color:"#3a5468" }}>Current state · no change applied</p>
+              <p style={{ margin:"0 0 16px", fontSize:12, color:C.textMid }}>Current state · no change applied</p>
               {[
                 ["Monthly Revenue",    fmt$(f1.revenue||0)],
                 ["Gross Margin",       fmtPct(f1.margin||0)],
@@ -438,15 +619,15 @@ export default function Dashboard({ biz, expMeta, op1, op2, recommendation, onBa
                 ["Avg Ticket",         fmt$(f1.avg_ticket||0)],
                 ["COGS",               fmt$(f1.cogs||0)],
               ].map(([k, v]) => (
-                <div key={k} style={{ display:"flex", justifyContent:"space-between", padding:"9px 0", borderBottom:`1px solid rgba(255,255,255,0.04)` }}>
+                <div key={k} style={{ display:"flex", justifyContent:"space-between", padding:"9px 0", borderBottom:`1px solid ${C.border}` }}>
                   <span style={{ fontSize:12.5, color:C.textDim }}>{k}</span>
-                  <span style={{ fontSize:13, fontWeight:600, color:"#7090b8" }}>{v}</span>
+                  <span style={{ fontSize:13, fontWeight:600, color:C.textMid }}>{v}</span>
                 </div>
               ))}
             </div>
             {/* OP2 */}
             <div style={s.accentCard}>
-              <p style={{ margin:"0 0 4px", fontSize:11, fontWeight:700, letterSpacing:"0.14em", textTransform:"uppercase", color:C.accentSoft }}>Experiment Results</p>
+              <p style={{ margin:"0 0 4px", fontSize:11, fontWeight:700, letterSpacing:"0.14em", textTransform:"uppercase", color:C.gold }}>Experiment Results</p>
               <p style={{ margin:"0 0 16px", fontSize:12, color:C.textMid }}>Post-decision projection · {expMeta?.label}</p>
               {[
                 ["Monthly Revenue",  fmt$(f2.revenue||0),              (f2.revenue||0)   >= (f1.revenue||0),  expl.revenue   ],
@@ -456,7 +637,7 @@ export default function Dashboard({ biz, expMeta, op1, op2, recommendation, onBa
                 ["Avg Ticket",       fmt$(f2.avg_ticket||0),           (f2.avg_ticket||0)>= (f1.avg_ticket||0),expl.avg_ticket],
                 ["COGS",             fmt$(f2.cogs||0),                 (f2.cogs||0)      <= (f1.cogs||0),     expl.cogs      ],
               ].map(([k, v, isGood, hint]) => (
-                <div key={k} style={{ padding:"9px 0", borderBottom:"1px solid rgba(13,148,136,0.1)" }}>
+                <div key={k} style={{ padding:"9px 0", borderBottom:`1px solid ${C.border}` }}>
                   <div style={{ display:"flex", justifyContent:"space-between" }}>
                     <span style={{ fontSize:12.5, color:C.textMid }}>{k}</span>
                     <span style={{ fontSize:13, fontWeight:700, color: isGood ? C.green : C.red }}>{v}</span>
@@ -501,32 +682,6 @@ export default function Dashboard({ biz, expMeta, op1, op2, recommendation, onBa
           </div>
         )}
 
-        {/* Recommender */}
-        <div style={{ ...fade, ...s.accentCard, border:"1px solid rgba(13,148,136,0.3)", transitionDelay:"0.3s" }}>
-          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom: recoOpen ? 16 : 0 }}>
-            <div>
-              <p style={{ margin:"0 0 2px", fontSize:11, fontWeight:700, letterSpacing:"0.14em", textTransform:"uppercase", color:C.accentSoft }}>Projected Recommendations</p>
-              <p style={{ margin:0, fontSize:12, color:C.textDim }}>What your simulation results suggest you should do next</p>
-            </div>
-            <button onClick={() => setRecoOpen(o => !o)} style={{ padding:"6px 14px", borderRadius:8, border:"1px solid rgba(13,148,136,0.3)", background:"transparent", color:C.accentSoft, fontSize:12, cursor:"pointer", fontFamily:"inherit" }}>
-              {recoOpen ? "Collapse ↑" : "Expand ↓"}
-            </button>
-          </div>
-          {recoOpen && (
-            <div style={{ borderTop:"1px solid rgba(13,148,136,0.12)", paddingTop:16 }}>
-              <div style={{ padding:"0 0 0 14px", borderLeft:"2px solid rgba(13,148,136,0.5)" }}>
-                <p style={{ margin:0, fontSize:13.5, color:"#7a9ac0", lineHeight:1.75 }}>
-                  {recommendation
-                    ? recommendation
-                    : d.revenue_delta >= 0
-                      ? `The simulation projects a revenue improvement of ${fmt$(d.revenue_delta)}/mo (+${((d.revenue_delta / (f1.revenue||1)) * 100).toFixed(1)}%) with margin ${marginDir} by ${Math.abs(Number(marginPp)).toFixed(1)}pp. Confidence score: ${Math.round(confidence*100)}%.`
-                      : `The simulation projects a revenue decline of ${fmt$(Math.abs(d.revenue_delta))}/mo with margin ${marginDir} by ${Math.abs(Number(marginPp)).toFixed(1)}pp. Review cost structure before proceeding. Confidence score: ${Math.round(confidence*100)}%.`
-                  }
-                </p>
-              </div>
-            </div>
-          )}
-        </div>
 
       </div>
     </div>

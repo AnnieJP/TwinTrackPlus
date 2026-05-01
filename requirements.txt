@@ -1,6 +1,4 @@
-statsmodels
-pmdarima
+yfinance
 pandas
 requests
-openai
 python-dotenv
