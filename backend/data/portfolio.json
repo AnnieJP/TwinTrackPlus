@@ -16,16 +16,16 @@
       "symbol": "MSFT",
       "name": "Microsoft Corp.",
       "type": "stock",
-      "shares": 666,
+      "shares": 6,
       "avg_cost": 380,
       "target_pct": 12,
       "currentPrice": 414.44,
-      "currentValue": 2072.2,
-      "costBasis": 1900,
-      "gainLoss": 172.19999999999982,
-      "gainLossPct": 9.063157894736833,
-      "currentPct": 10.81333815503223,
-      "drift": -1.1866618449677695
+      "currentValue": 276017.04,
+      "costBasis": 253080,
+      "gainLoss": 22937.03999999998,
+      "gainLossPct": 9.063157894736834,
+      "currentPct": 94.16898967108428,
+      "drift": 82.16898967108428
     },
     {
       "id": "h3",
@@ -62,6 +62,303 @@
       "shares": 6,
       "avg_cost": 235.0,
       "target_pct": 13
+    },
+    {
+      "id": "32a2466d-6f76-4c75-a312-c7dcffb34f2c",
+      "symbol": "AAPL",
+      "name": "Apple Inc.",
+      "shares": 45,
+      "avg_cost": 145.2,
+      "target_pct": 0,
+      "type": "stock"
+    },
+    {
+      "id": "5bc84724-52dd-4f24-8bfa-9f672ac0f0ff",
+      "symbol": "MSFT",
+      "name": "Microsoft Corp.",
+      "shares": 20,
+      "avg_cost": 310.5,
+      "target_pct": 0,
+      "type": "stock"
+    },
+    {
+      "id": "6caefb6d-bc94-449d-9ef9-a09c703aacf1",
+      "symbol": "NVDA",
+      "name": "NVIDIA Corp.",
+      "shares": 15,
+      "avg_cost": 480,
+      "target_pct": 0,
+      "type": "stock"
+    },
+    {
+      "id": "ac8fd17e-b3fc-4592-b043-bda3d3644f5c",
+      "symbol": "GOOGL",
+      "name": "Alphabet Inc. (Cl A)",
+      "shares": 10,
+      "avg_cost": 138,
+      "target_pct": 0,
+      "type": "stock"
+    },
+    {
+      "id": "3aa35b26-2c57-4068-8930-e07b7bd1c239",
+      "symbol": "AMZN",
+      "name": "Amazon.com Inc.",
+      "shares": 8,
+      "avg_cost": 175,
+      "target_pct": 0,
+      "type": "stock"
+    },
+    {
+      "id": "3779d650-3e2a-493c-bc4d-ea64b254e506",
+      "symbol": "JPM",
+      "name": "JPMorgan Chase & Co.",
+      "shares": 25,
+      "avg_cost": 185,
+      "target_pct": 0,
+      "type": "stock"
+    },
+    {
+      "id": "b3d22ce5-23d8-42ee-88bd-252e4fa37a7d",
+      "symbol": "TSLA",
+      "name": "Tesla Inc.",
+      "shares": 12,
+      "avg_cost": 210,
+      "target_pct": 0,
+      "type": "stock"
+    },
+    {
+      "id": "0dc48530-ac2c-4a0c-9c29-cab66e548997",
+      "symbol": "VOO",
+      "name": "Vanguard S&P 500 ETF",
+      "shares": 55,
+      "avg_cost": 410,
+      "target_pct": 0,
+      "type": "etf"
+    },
+    {
+      "id": "9e504455-4fd5-4dda-aba8-0999a856df09",
+      "symbol": "EEM",
+      "name": "iShares MSCI Emrg. Markets",
+      "shares": 100,
+      "avg_cost": 38.5,
+      "target_pct": 0,
+      "type": "etf"
+    },
+    {
+      "id": "55220b89-c0b4-4750-b11b-4de75ebacb03",
+      "symbol": "FSKAX",
+      "name": "Fidelity Total Market Index",
+      "shares": 200,
+      "avg_cost": 98,
+      "target_pct": 0,
+      "type": "etf"
+    },
+    {
+      "id": "d0a75381-93e4-4e4a-bb14-266b755a8ae9",
+      "symbol": "BND",
+      "name": "Vanguard Total Bond Market",
+      "shares": 80,
+      "avg_cost": 72,
+      "target_pct": 0,
+      "type": "bond"
+    },
+    {
+      "id": "38eaa88a-bde9-4241-bd9c-57c9f1de19a2",
+      "symbol": "AAPL",
+      "name": "Apple Inc.",
+      "shares": 45,
+      "avg_cost": 145.2,
+      "target_pct": 0,
+      "type": "stock"
+    },
+    {
+      "id": "6722d94c-61dd-460f-8fa4-638a0b8c7b04",
+      "symbol": "MSFT",
+      "name": "Microsoft Corp.",
+      "shares": 20,
+      "avg_cost": 310.5,
+      "target_pct": 0,
+      "type": "stock"
+    },
+    {
+      "id": "f97919a5-e359-4508-a735-26bc1a981d43",
+      "symbol": "NVDA",
+      "name": "NVIDIA Corp.",
+      "shares": 15,
+      "avg_cost": 480,
+      "target_pct": 0,
+      "type": "stock"
+    },
+    {
+      "id": "0392493a-2977-4870-aaaf-3a12772dddca",
+      "symbol": "GOOGL",
+      "name": "Alphabet Inc. (Class A)",
+      "shares": 10,
+      "avg_cost": 138,
+      "target_pct": 0,
+      "type": "stock"
+    },
+    {
+      "id": "b7ca9540-4b57-4e15-9b5a-68911defa096",
+      "symbol": "AMZN",
+      "name": "Amazon.com Inc.",
+      "shares": 8,
+      "avg_cost": 175,
+      "target_pct": 0,
+      "type": "stock"
+    },
+    {
+      "id": "6f2c656a-4bda-4b79-9dae-5d88d40ea230",
+      "symbol": "VOO",
+      "name": "Vanguard S&P 500 ETF",
+      "shares": 55,
+      "avg_cost": 410,
+      "target_pct": 0,
+      "type": "etf"
+    },
+    {
+      "id": "4338a1bd-a20e-48a8-9a98-023bec4c17a8",
+      "symbol": "EEM",
+      "name": "iShares MSCI Emerg. Mkts",
+      "shares": 100,
+      "avg_cost": 38.5,
+      "target_pct": 0,
+      "type": "etf"
+    },
+    {
+      "id": "7c928672-3a69-4f76-bb3f-113eebd14481",
+      "symbol": "FSKAX",
+      "name": "Fidelity Total Mkt Index",
+      "shares": 200,
+      "avg_cost": 98,
+      "target_pct": 0,
+      "type": "etf"
+    },
+    {
+      "id": "4f4f0443-5d9f-492e-921b-9fa638db65dd",
+      "symbol": "BND",
+      "name": "Vanguard Total Bond ETF",
+      "shares": 80,
+      "avg_cost": 72,
+      "target_pct": 0,
+      "type": "etf"
+    },
+    {
+      "id": "644e8f0d-f1bb-4f31-90d9-790212b2ee3e",
+      "symbol": "JPM",
+      "name": "JPMorgan Chase & Co.",
+      "shares": 25,
+      "avg_cost": 185,
+      "target_pct": 0,
+      "type": "etf"
+    },
+    {
+      "id": "a4c1429c-bb86-466f-96db-0f51888765a6",
+      "symbol": "TSLA",
+      "name": "Tesla Inc.",
+      "shares": 12,
+      "avg_cost": 210,
+      "target_pct": 0,
+      "type": "etf"
+    },
+    {
+      "id": "52e48274-eb83-458a-9090-7a6098841cdd",
+      "symbol": "AAPL",
+      "name": "Apple Inc.",
+      "shares": 45,
+      "avg_cost": 145.2,
+      "target_pct": 0,
+      "type": "stock"
+    },
+    {
+      "id": "969aa1bd-0ccb-41af-8e06-3fa6147e7180",
+      "symbol": "MSFT",
+      "name": "Microsoft Corp.",
+      "shares": 20,
+      "avg_cost": 310.5,
+      "target_pct": 0,
+      "type": "stock"
+    },
+    {
+      "id": "7334083c-549f-45d1-af4a-abda55d38eb7",
+      "symbol": "NVDA",
+      "name": "NVIDIA Corp.",
+      "shares": 15,
+      "avg_cost": 480,
+      "target_pct": 0,
+      "type": "stock"
+    },
+    {
+      "id": "5b8b7320-661f-4b21-ac1d-aeb1b289d4f2",
+      "symbol": "GOOGL",
+      "name": "Alphabet Inc. (Cl A)",
+      "shares": 10,
+      "avg_cost": 138,
+      "target_pct": 0,
+      "type": "stock"
+    },
+    {
+      "id": "95afa7e1-d26a-43b1-b539-2c525afe89f8",
+      "symbol": "AMZN",
+      "name": "Amazon.com Inc.",
+      "shares": 8,
+      "avg_cost": 175,
+      "target_pct": 0,
+      "type": "stock"
+    },
+    {
+      "id": "8eb0c049-af7e-45b9-a0bc-a08f6a5282b6",
+      "symbol": "JPM",
+      "name": "JPMorgan Chase & Co.",
+      "shares": 25,
+      "avg_cost": 185,
+      "target_pct": 0,
+      "type": "stock"
+    },
+    {
+      "id": "ff9aa7b6-349e-4395-ad43-42db1ad43789",
+      "symbol": "TSLA",
+      "name": "Tesla Inc.",
+      "shares": 12,
+      "avg_cost": 210,
+      "target_pct": 0,
+      "type": "stock"
+    },
+    {
+      "id": "f428e51b-7563-44e2-bc90-ba9ced436851",
+      "symbol": "VOO",
+      "name": "Vanguard S&P 500 ETF",
+      "shares": 55,
+      "avg_cost": 410,
+      "target_pct": 0,
+      "type": "etf"
+    },
+    {
+      "id": "4e8bf096-4469-43ac-802e-164fb2af6985",
+      "symbol": "EEM",
+      "name": "iShares MSCI Emrg. Markets",
+      "shares": 100,
+      "avg_cost": 38.5,
+      "target_pct": 0,
+      "type": "etf"
+    },
+    {
+      "id": "8e4ccd51-6283-498f-b136-083ba2a2189e",
+      "symbol": "FSKAX",
+      "name": "Fidelity Total Market Index",
+      "shares": 200,
+      "avg_cost": 98,
+      "target_pct": 0,
+      "type": "etf"
+    },
+    {
+      "id": "b9f91fbc-8c3e-4f68-afd4-5e9ef68d8add",
+      "symbol": "BND",
+      "name": "Vanguard Total Bond Market",
+      "shares": 80,
+      "avg_cost": 72,
+      "target_pct": 0,
+      "type": "bond"
     }
   ],
   "cash": 3500,

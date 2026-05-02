@@ -20,8 +20,11 @@ POST /api/scenario               {portfolio, prices, scenario_id}  → sim
 
 from __future__ import annotations
 
+import base64
+import io
 import json
 import os
+import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -216,6 +219,125 @@ def calc_risk(portfolio: dict, prices: dict) -> dict:
         "holdings_risk":         sorted(holdings_risk, key=lambda x: -x["weight_pct"]),
         "total_value":           round(total, 2),
     }
+
+# ── PDF import ───────────────────────────────────────────────────────────────
+_FALSE_POS = {
+    'USD','APR','AUG','JAN','FEB','MAR','MAY','JUN','JUL','SEP','OCT',
+    'NOV','DEC','LLC','ETF','INC','ACH','MMF','APY','SIPC','FINRA',
+    'THE','AND','FOR','NET','MKT','AVG','PCT','DIV','CLS','ORD',
+}
+
+_HEADER_SKIP = {
+    "Security", "Company", "Fund Name", "Ticker", "Shares", "Avg Cost",
+    "Avg Cost/Sh", "Current Price", "Mkt Value", "Cost Basis", "Gain/Loss",
+    "Unrlzd G/L", "Return %", "% Port", "% of Portfolio", "Date", "Type",
+    "Price", "Amount", "Description", "Account", "Balance", "Interest Rate (APY)",
+}
+
+def _parse_holdings_text(text: str) -> list:
+    """
+    Handle PDF extraction where every cell lands on its own line.
+    Strategy: find standalone ticker tokens, then look backward for the
+    name and forward for shares + avg_cost.
+    """
+    holdings, seen = [], set()
+    current_type = "stock"
+    type_hints = [
+        (["ETF", "INDEX FUND", "INDEX FUNDS"], "etf"),
+        (["BOND", "BONDS", "FIXED INCOME"],    "bond"),
+        (["MUTUAL FUND", "MUTUAL FUNDS"],       "fund"),
+        (["EQUIT", "INDIVIDUAL STOCK"],          "stock"),
+    ]
+
+    lines = [l.strip() for l in text.splitlines()]
+
+    for i, line in enumerate(lines):
+        if not line:
+            continue
+        up = line.upper()
+        # Update asset-class context from section headers
+        if len(line) < 80:
+            for kws, t in type_hints:
+                if any(k in up for k in kws):
+                    current_type = t
+                    break
+
+        # Identify a standalone ticker: 2-5 uppercase letters, nothing else on the line
+        if not re.match(r'^[A-Z]{2,5}$', line):
+            continue
+        if line in _FALSE_POS:
+            continue
+
+        ticker = line
+
+        # ── find the company name by scanning backward ──────────────────
+        name = ticker
+        for j in range(i - 1, max(i - 5, -1), -1):
+            cand = lines[j]
+            if not cand:
+                continue
+            # Skip pure-number or pure-dollar lines and known header labels
+            if re.match(r'^[\$\+\-\d\.\,%\*]+$', cand):
+                continue
+            if cand in _HEADER_SKIP:
+                continue
+            name = cand
+            break
+
+        # ── find shares (plain number) and avg_cost ($amount) forward ───
+        shares: float | None   = None
+        avg_cost: float | None = None
+        for j in range(i + 1, min(i + 8, len(lines))):
+            cand = lines[j]
+            if not cand:
+                continue
+            if shares is None and re.match(r'^\d{1,6}(\.\d{1,3})?$', cand):
+                try:
+                    v = float(cand)
+                    if 0 < v < 100_000:
+                        shares = v
+                except ValueError:
+                    pass
+            elif avg_cost is None and re.match(r'^\$([\d,]+\.?\d{0,2})$', cand):
+                try:
+                    v = float(cand[1:].replace(',', ''))
+                    if 0 < v < 1_000_000:
+                        avg_cost = v
+                except ValueError:
+                    pass
+            if shares is not None and avg_cost is not None:
+                break
+
+        if shares is None or avg_cost is None:
+            continue
+        if ticker in seen:
+            continue
+        seen.add(ticker)
+
+        holdings.append({
+            "id":         str(uuid.uuid4()),
+            "symbol":     ticker,
+            "name":       name,
+            "shares":     shares,
+            "avg_cost":   round(avg_cost, 2),
+            "target_pct": 0,
+            "type":       current_type,
+        })
+    return holdings
+
+def import_pdf(pdf_b64: str) -> dict:
+    try:
+        import pypdf
+    except ImportError:
+        return {"error": "pypdf not installed — run: pip install pypdf"}
+    try:
+        data   = base64.b64decode(pdf_b64)
+        reader = pypdf.PdfReader(io.BytesIO(data))
+        text   = "\n".join(p.extract_text() or "" for p in reader.pages)
+        rows   = _parse_holdings_text(text)
+        return {"holdings": rows, "count": len(rows)}
+    except Exception as exc:
+        return {"error": str(exc)}
 
 # ── Rebalancing ───────────────────────────────────────────────────────────────
 def calc_rebalance(portfolio: dict, prices: dict) -> dict:
@@ -454,6 +576,9 @@ class Handler(BaseHTTPRequestHandler):
                 body.get("prices", {}),
                 body.get("scenario_id", "market_crash"),
             ))
+
+        if p == "/api/portfolio/import-pdf":
+            return self._json(import_pdf(body.get("pdf_b64", "")))
 
         self._json({"error": "Not found"}, 404)
 
